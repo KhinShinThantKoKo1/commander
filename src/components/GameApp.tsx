@@ -68,6 +68,7 @@ export default function GameApp() {
   const [spaceWeatherError, setSpaceWeatherError] = useState("");
   const busyRef = useRef(false);
   const missionRef = useRef<MissionState | null>(null);
+  const lastRunningSpeedRef = useRef<1 | 3>(1);
   const miraDragRef = useRef<MiraDrag | null>(null);
   const suppressMiraClickRef = useRef(false);
   const commandRef = useRef<(command: MissionCommand) => Promise<void>>(async () => undefined);
@@ -249,6 +250,13 @@ export default function GameApp() {
   function selectCrewMember(id: string | null) {
     playSoundEffect("select");
     setSelectedCrewId(id);
+  }
+
+  function toggleSimulationSpeed() {
+    if (!mission) return;
+    if (mission.speed !== 0) lastRunningSpeedRef.current = mission.speed;
+    playSoundEffect("select");
+    void dispatch({ type: "SET_SPEED", speed: mission.speed === 0 ? lastRunningSpeedRef.current : 0 });
   }
 
   function answerMira(question: string) {
@@ -473,7 +481,9 @@ export default function GameApp() {
             <span>CHALLENGE LIVES</span>
             <strong aria-hidden="true">{Array.from({ length: 5 }, (_, index) => <i className={index < mission.challengeLives ? "life-live" : "life-lost"} key={index}>♥</i>)}</strong>
           </div>
-          <button type="button" aria-label="Pause simulation" aria-pressed={mission.speed === 0} onClick={() => { playSoundEffect("select"); void dispatch({ type: "SET_SPEED", speed: 0 }); }} className={mission.speed === 0 ? "speed-active" : ""}>Ⅱ Pause</button>
+          <button type="button" aria-label={mission.speed === 0 ? "Resume simulation" : "Pause simulation"} aria-pressed={mission.speed === 0} onClick={toggleSimulationSpeed} className={`simulation-toggle ${mission.speed === 0 ? "speed-active" : ""}`}>
+            <span className="simulation-control-icon" aria-hidden="true">{mission.speed === 0 ? "▶" : "Ⅱ"}</span>{mission.speed === 0 ? "Resume" : "Pause"}
+          </button>
           <button type="button" aria-label="Set simulation speed to normal" aria-pressed={mission.speed === 1} onClick={() => { playSoundEffect("select"); void dispatch({ type: "SET_SPEED", speed: 1 }); }} className={mission.speed === 1 ? "speed-active" : ""}>1× Normal</button>
           <button type="button" aria-label="Set simulation speed to fast" aria-pressed={mission.speed === 3} onClick={() => { playSoundEffect("select"); void dispatch({ type: "SET_SPEED", speed: 3 }); }} className={mission.speed === 3 ? "speed-active" : ""}>3× Fast</button>
           <button type="button" className="exit-button" onClick={() => { playSoundEffect("select"); setMission(null); missionRef.current = null; setSelectedCrewId(null); }}>Exit mission</button>
