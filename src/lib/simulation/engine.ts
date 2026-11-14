@@ -1,5 +1,6 @@
 import { GAMEPLAY_ASSUMPTIONS, SCIENCE_DATA_VERSION, SCIENCE_REFERENCES } from "./science";
 import { EQUIPMENT_CATALOG as equipmentCatalog } from "./equipment";
+import { getDailyChallenge } from "./dailyChallenges";
 import type {
   CreateMissionInput, Difficulty, EquipmentSystem, IncidentChoice, IncidentKind, MissionCommand,
   MissionIncident, MissionLogEntry, MissionObjective, MissionState, Planet
@@ -196,6 +197,9 @@ export function createMission(id: string, input: CreateMissionInput, now = new D
     activeIncident: null,
     resolvedIncidentIds: [],
     objectives: DAILY_OBJECTIVES[input.planet].map((objective) => ({ ...objective, complete: false })),
+    challengeLives: 5,
+    completedChallengeDays: [],
+    challengeWrongChoices: {},
     eventFlags: [],
     telemetry: [],
     lastMessage: "Mission initialized. Inspect the base and keep essential systems running.",
@@ -244,9 +248,55 @@ export function ensureDailyObjectives(state: MissionState): MissionState {
   };
 }
 
+export function ensureDailyChallengeProgress(state: MissionState): MissionState {
+  const challengeLives = Number.isInteger(state.challengeLives) ? clamp(state.challengeLives, 0, 5) : 5;
+  const completedChallengeDays = Array.isArray(state.completedChallengeDays)
+    ? [...new Set(state.completedChallengeDays.filter((day) => Number.isInteger(day) && day >= 1 && day <= 7))]
+    : [];
+  const wrongChoices: Record<string, string[]> = {};
+  if (state.challengeWrongChoices && typeof state.challengeWrongChoices === "object") {
+    for (const [day, choices] of Object.entries(state.challengeWrongChoices)) {
+      const dayNumber = Number(day);
+      if (Number.isInteger(dayNumber) && dayNumber >= 1 && dayNumber <= 7 && Array.isArray(choices)) {
+        wrongChoices[day] = [...new Set(choices.filter((choice): choice is string => typeof choice === "string"))];
+      }
+    }
+  }
+  const sameWrongChoices = JSON.stringify(wrongChoices) === JSON.stringify(state.challengeWrongChoices ?? {});
+  const sameCompletedDays = Array.isArray(state.completedChallengeDays) &&
+    completedChallengeDays.length === state.completedChallengeDays.length &&
+    completedChallengeDays.every((day, index) => day === state.completedChallengeDays[index]);
+  if (challengeLives === state.challengeLives && sameCompletedDays && sameWrongChoices) return state;
+  return { ...state, challengeLives, completedChallengeDays, challengeWrongChoices: wrongChoices };
+}
+
 export function areDailyObjectivesComplete(state: MissionState, day = state.day): boolean {
   const objectives = state.objectives.filter((objective) => (objective.day ?? 1) === day);
   return objectives.length === 3 && objectives.every((objective) => objective.complete);
+}
+
+export function isDailyChallengeComplete(state: MissionState, day = state.day): boolean {
+  return (state.completedChallengeDays ?? []).includes(day);
+}
+
+export function areDailyRequirementsComplete(state: MissionState, day = state.day): boolean {
+  return areDailyObjectivesComplete(state, day) && isDailyChallengeComplete(state, day);
+}
+
+function restartMissionAtDayOne(state: MissionState): MissionState {
+  const restarted = createMission(state.id, {
+    planet: state.planet,
+    difficulty: state.difficulty,
+    playerName: state.playerName,
+    playerCharacterId: state.playerCharacterId,
+    supportCrewIds: state.crew.slice(1).map((member) => member.characterId)
+  }, state.updatedAt);
+  const message = "Mission restarted at Day 1 with five challenge lives restored.";
+  return {
+    ...restarted,
+    lastMessage: message,
+    telemetry: [...restarted.telemetry, logEntry(restarted, "SYSTEM", "Day 1 restart", message)]
+  };
 }
 
 function getSystem(state: MissionState, id: string): EquipmentSystem | undefined {
@@ -469,18 +519,22 @@ function tickOneMinute(original: MissionState): MissionState {
 
   if (state.elapsedMinutes >= 7 * MINUTES_PER_DAY) {
     const allObjectives = state.objectives.every((objective) => objective.complete);
+    const allChallenges = state.completedChallengeDays.length === 7 && state.challengeLives > 0;
     const essentialsStable = state.resources.oxygenKg >= crewReserveOxygenKg && state.resources.potableWaterKg >= crewReserveWaterKg && state.resources.foodKg >= crewReserveFoodKg && state.resources.oxygenPartialPressureKpa >= failed.oxygenPartialPressureKpa && state.resources.co2PartialPressureKpa <= failed.co2PartialPressureKpa;
-    const status = allObjectives && essentialsStable ? "SUCCESS" : "FAILED";
-    const message = status === "SUCCESS" ? "Seven days completed, all 21 daily objectives were verified, and NASA reference reserves were maintained." : "Seven days completed, but one or more daily objectives or emergency reserve thresholds were not met.";
+    const status = allObjectives && allChallenges && essentialsStable ? "SUCCESS" : "FAILED";
+    const message = status === "SUCCESS"
+      ? `Congratulations! The crew survived all seven days, completed all 21 objectives and daily challenges, and finished with ${state.challengeLives} challenge ${state.challengeLives === 1 ? "life" : "lives"}.`
+      : "Seven days completed, but a daily objective, challenge, or emergency reserve requirement was not met.";
     state = { ...state, status, lastMessage: message, telemetry: [...state.telemetry, logEntry(state, "RESULT", status === "SUCCESS" ? "Mission complete" : "Mission incomplete", message)] };
   }
 
   if (state.elapsedMinutes === 1) state = { ...state, telemetry: [...state.telemetry, logEntry(state, "SYSTEM", "Simulation started", "One tick represents one simulated minute. Rendering frame rate does not affect resource calculations.")] };
   if (state.day > original.day) {
     const todaysObjectives = state.objectives.filter((objective) => objective.day === state.day).map((objective) => objective.title);
+    const dailyChallenge = getDailyChallenge(state.planet, state.day);
     state = {
       ...state,
-      telemetry: [...state.telemetry, logEntry(state, "SYSTEM", `Mission day ${state.day}`, `New operational day. Today's three objectives: ${todaysObjectives.join("; ")}`)]
+      telemetry: [...state.telemetry, logEntry(state, "SYSTEM", `Mission day ${state.day}`, `New operational day. Today's three objectives: ${todaysObjectives.join("; ")} Daily astronaut challenge: ${dailyChallenge?.title ?? "none"}.`)]
     };
   }
   if (state.resources.powerUnmetKw > 0.01 && !state.eventFlags.includes("unmet-power-warning")) {
@@ -492,22 +546,26 @@ function tickOneMinute(original: MissionState): MissionState {
 
 export function advanceMinutes(state: MissionState, minutes: number): MissionState {
   state = ensureDailyObjectives(state);
+  state = ensureDailyChallengeProgress(state);
   const count = Math.max(0, Math.min(10_080, Math.floor(minutes)));
   let next = state;
-  let blockedByObjectives = false;
+  let blockedByRequirements = false;
   for (let i = 0; i < count && next.status === "ACTIVE" && !next.activeIncident; i += 1) {
-    if (next.elapsedMinutes >= next.day * MINUTES_PER_DAY - 1 && !areDailyObjectivesComplete(next)) {
-      blockedByObjectives = true;
+    if (next.elapsedMinutes >= next.day * MINUTES_PER_DAY - 1 && !areDailyRequirementsComplete(next)) {
+      blockedByRequirements = true;
       break;
     }
     next = tickOneMinute(next);
   }
-  if (blockedByObjectives) {
-    const message = `Day ${next.day} is paused at its end. Complete all three daily objectives before advancing.`;
+  if (blockedByRequirements) {
+    const missingObjectives = !areDailyObjectivesComplete(next);
+    const message = missingObjectives
+      ? `Day ${next.day} is paused at its end. Complete all three daily objectives before advancing.`
+      : `Day ${next.day} is paused at its end. Complete the daily astronaut challenge before advancing.`;
     next = {
       ...next,
       lastMessage: message,
-      telemetry: [...next.telemetry, logEntry(next, "SYSTEM", "Daily objectives required", message)]
+      telemetry: [...next.telemetry, logEntry(next, "SYSTEM", missingObjectives ? "Daily objectives required" : "Daily challenge required", message)]
     };
   }
   return { ...next, updatedAt: simulatedTimestamp(next) };
@@ -517,6 +575,45 @@ function markObjective(state: MissionState, id: string): MissionState {
   const target = state.objectives.find((objective) => objective.id === id);
   if (!target || target.complete || (target.day ?? 1) > state.day) return state;
   return { ...state, objectives: state.objectives.map((objective) => objective.id === id ? { ...objective, complete: true } : objective) };
+}
+
+function answerDailyChallenge(state: MissionState, day: number, choiceId: string): MissionState {
+  const challenge = getDailyChallenge(state.planet, day);
+  if (day !== state.day || !challenge || isDailyChallengeComplete(state, day)) return state;
+  if (!challenge.options.some((option) => option.id === choiceId)) return state;
+
+  const dayKey = String(day);
+  const previousWrongChoices = state.challengeWrongChoices[dayKey] ?? [];
+  if (previousWrongChoices.includes(choiceId)) return state;
+
+  if (choiceId === challenge.correctOptionId) {
+    const message = `Day ${day} challenge complete. ${challenge.explanation}`;
+    return {
+      ...state,
+      completedChallengeDays: [...state.completedChallengeDays, day],
+      lastMessage: message,
+      telemetry: [...state.telemetry, logEntry(state, "PLAYER", `${challenge.title} — correct`, challenge.explanation)],
+      updatedAt: simulatedTimestamp(state)
+    };
+  }
+
+  const challengeLives = Math.max(0, state.challengeLives - 1);
+  const wrongChoices = [...previousWrongChoices, choiceId];
+  const message = challengeLives === 0
+    ? "All five challenge lives were used. Restart the mission from Day 1 to try again."
+    : `That is not the safest response. One challenge life used; ${challengeLives} remain. Try another option.`;
+  const next = {
+    ...state,
+    status: challengeLives === 0 ? "FAILED" as const : state.status,
+    challengeLives,
+    challengeWrongChoices: { ...state.challengeWrongChoices, [dayKey]: wrongChoices },
+    lastMessage: message,
+    updatedAt: simulatedTimestamp(state)
+  };
+  return {
+    ...next,
+    telemetry: [...next.telemetry, logEntry(next, challengeLives === 0 ? "RESULT" : "PLAYER", challengeLives === 0 ? "Challenge lives used" : `${challenge.title} — incorrect`, message)]
+  };
 }
 
 function applyChoice(state: MissionState, choiceId: string): MissionState {
@@ -741,9 +838,14 @@ function inspectionReport(state: MissionState, equipmentId: string): string {
 
 export function applyCommand(state: MissionState, command: MissionCommand): MissionState {
   state = ensureDailyObjectives(state);
+  state = ensureDailyChallengeProgress(state);
+  if (command.type === "RESTART_DAY_ONE") {
+    return state.status === "FAILED" && state.challengeLives === 0 ? restartMissionAtDayOne(state) : state;
+  }
   if (state.status !== "ACTIVE" && command.type !== "SET_SPEED") return state;
   if (command.type === "ADVANCE") return advanceMinutes(state, command.minutes);
   if (command.type === "SET_SPEED") return { ...state, speed: command.speed, updatedAt: simulatedTimestamp(state) };
+  if (command.type === "ANSWER_DAILY_CHALLENGE") return answerDailyChallenge(state, command.day, command.choiceId);
   if (command.type === "TOGGLE_SYSTEM") {
     const system = getSystem(state, command.systemId);
     if (!system) return state;
@@ -810,15 +912,23 @@ export function getEducationalHint(state: MissionState, question = "hint"): stri
   if (q.includes("solar") || q.includes("panel") || q.includes("sun") || (q === "hint" && state.planet === "MOON")) {
     return `Array check: output ${r.solarGenerationKw.toFixed(2)} kW, training solar factor ${r.solarFactor.toFixed(2)}, panel condition ${r.panelCondition.toFixed(0)}%. Compare generation with demand (${r.electricalDemandKw.toFixed(2)} kW). Is there enough power for every active load?`;
   }
+  if (q.includes("challenge")) {
+    const challenge = getDailyChallenge(state.planet, state.day);
+    if (isDailyChallengeComplete(state)) return `Day ${state.day}'s ${challenge?.title ?? "astronaut"} challenge is complete. ${state.challengeLives} challenge ${state.challengeLives === 1 ? "life remains" : "lives remain"} for the campaign.`;
+    if (state.challengeLives === 0) return "All five challenge lives have been used. Restart the mission at Day 1 to try again.";
+    const usedChoices = state.challengeWrongChoices[String(state.day)]?.length ?? 0;
+    const retryMessage = usedChoices ? `${usedChoices} previous option${usedChoices === 1 ? " is" : "s are"} locked. ` : "";
+    return `Today's scenario is ${challenge?.title ?? "the astronaut challenge"}: ${challenge?.scenario ?? "review the daily challenge card"}. You have ${state.challengeLives} lives; a wrong choice costs one. ${retryMessage}Which evidence will guide your response?`;
+  }
   if (q.includes("objective") || q.includes("goal") || q.includes("task") || q.includes("next")) {
     const todaysObjectives = state.objectives.filter((objective) => (objective.day ?? 1) === state.day);
     const pendingToday = todaysObjectives.filter((objective) => !objective.complete);
     const completedCount = state.objectives.filter((objective) => objective.complete).length;
     return pendingToday.length
-      ? `Day ${state.day} has ${pendingToday.length} of 3 objectives remaining: ${pendingToday.map((objective) => objective.title).join("; ")}. Overall progress is ${completedCount}/${state.objectives.length}. Which task will you tackle first?`
+      ? `Day ${state.day} has ${pendingToday.length} of 3 objectives remaining: ${pendingToday.map((objective) => objective.title).join("; ")}. ${isDailyChallengeComplete(state) ? "Today's challenge is complete." : "Answer today's astronaut challenge too."} Overall progress is ${completedCount}/${state.objectives.length}. Which task will you tackle first?`
       : completedCount === state.objectives.length
-        ? "All 21 daily objectives are complete. Keep the essential systems and emergency reserves stable through Day 7."
-        : `You have completed all three objectives for Day ${state.day}. Overall progress is ${completedCount}/${state.objectives.length}. What would you like to review next?`;
+        ? `All 21 daily objectives are complete. Keep the essential systems and emergency reserves stable through Day 7; ${state.completedChallengeDays.length}/7 daily challenges are complete.`
+        : `You have completed all three objectives for Day ${state.day}. ${isDailyChallengeComplete(state) ? "The daily challenge is also complete." : "Answer the daily astronaut challenge before advancing."} Overall progress is ${completedCount}/${state.objectives.length}. What would you like to review next?`;
   }
   if (q.includes("alert") || q.includes("incident") || q.includes("warning")) {
     return state.activeIncident

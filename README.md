@@ -8,6 +8,7 @@ A full-stack Next.js application for an educational Moon/Mars outpost survival g
 
 - Astronaut selection using the eight supplied character reference illustrations.
 - Player-created call sign and three selected supporting crew members.
+- A 12-stop interactive pre-mission outpost field guide with short knowledge checks, NASA photographs, crew readiness summary and animated launch transition.
 - Supporting crew patrol the outpost while idle. Select a crew member, choose an equipment station, then run one of its existing actions to assign the job and send them to that station.
 - Moon and Mars scenario selection.
 - A stylized 3D exterior outpost scene with habitat, command centre, air/water systems, greenhouse, airlock, solar field, communications mast, rover, battery bank, storm shelter, food store and maintenance area.
@@ -15,9 +16,12 @@ A full-stack Next.js application for an educational Moon/Mars outpost survival g
 - Fifteen equipment objects with action definitions, duration, requirements, failure conditions and modeled consequences.
 - Twenty-one daily mission objectives across the seven-day campaign (three unique, actionable objectives per day), with per-day progress and an overall completion count.
 - Separate Moon and Mars objective schedules link to NASA's lunar polar imagery and dust research, Mars Trek, MOXIE results, and InSight's dust-storm power record.
+- A new planet-specific, five-option astronaut scenario each day, grounded in NASA and CSA resources. Incorrect daily choices spend one of five campaign lives; using all five ends the run and enables a Day 1 restart.
+- The crew must finish each day's three 3D objectives and scenario before advancing. Survive all seven days with objectives, challenges, and reserves intact for a character celebration with a 3D jump and confetti.
 - Mission HUD for kW, kWh, oxygen inventory, O₂/CO₂ partial pressure, potable water, wastewater, food and shelter readiness.
 - Five-option incident-response events when model conditions trigger an alert. Mars mode schedules a Day 1 dust-training incident; this is an authored lesson, not a forecast.
-- A five-choice space-weather challenge built from a recent NASA DONKI solar-flare event. Its single best response distinguishes flare classification from crew dose and points to radiation monitoring and approved mission procedures.
+- Optional five-choice NASA DONKI practice built from a recent solar-flare event. Its best response distinguishes flare classification from crew dose; this extra practice does not spend campaign lives.
+- Optional, persisted sound effects use short synthesized Web Audio cues for selections, knowledge checks, alerts, objectives, launch and campaign outcomes. The sound control is available during setup, the field guide and the mission.
 - MIRA's local, state-aware hint logic behind a transparent mascot icon; click to open the draggable assistant window (no AI service/API key required for this starter).
 - Fixed minute tick, 1x/3x/pause controls, deterministic calculations and seeded water-check event logic.
 - Each mission day remains 24 simulated hours; Normal speed runs five simulated minutes per real second (about 4m 48s per day), Fast speed runs three times faster, and an optional advance-to-next-day control simulates forward while still stopping for incidents.
@@ -40,6 +44,8 @@ Source: https://ntrs.nasa.gov/citations/20210024855
 These are reference design assumptions, not universal Moon/Mars survival limits.
 
 Planet-specific mission objectives use NASA mission results and data portals as educational context. The linked observations are historical or architectural references, not live local conditions: for example, ShadowCam identifies permanently shadowed lunar terrain as a possible volatile prospecting target, MOXIE demonstrated oxygen production but did not provide crew-scale life support, and InSight's recorded dust-storm power drop is one historical event rather than a Mars forecast.
+
+Before launch, the field guide requests photographs from NASA's public Image and Video Library API and links each result to its NASA source page with available photo credit. The rover stop uses NASA Apollo 17 lunar-rover and Perseverance images. The four-person crew stop uses NASA's Artemis II official crew portrait, sourced from Wikimedia Commons as public domain and bundled at `public/assets/briefing/artemis-ii-crew.jpg` with credit to NASA photographer Josh Valcarcel; see the [image's Commons page and license](https://commons.wikimedia.org/wiki/File:Artemis_2_Crew_Portrait.jpg). NASA states its media are generally not subject to U.S. copyright, but individual third-party works may be marked and require separate permission; see [NASA's media usage guidelines](https://www.nasa.gov/nasa-brand-center/images-and-media/). The selected game characters use the supplied local character illustrations on the readiness cards. If NASA's image service is unavailable, lessons remain readable and can link to the corresponding NASA Images search.
 
 ### Explicit gameplay assumptions
 
@@ -182,7 +188,7 @@ The repository includes unit tests for resource calculations, deterministic repl
 
 ## Character assets and 3D status
 
-The supplied PNG illustrations are included under `public/assets/characters/` and used for selection/crew reference cards and in-world head portraits. The in-world crew bodies are procedural low-poly geometry with character-specific accent colours and are not rigged 3D models. Exact face, hair, suit and accessories matching the references requires creating and validating rigged GLB/GLTF assets, which are not included in this package.
+The supplied PNG illustrations are included under `public/assets/characters/` and used for selection/crew reference cards, readiness portraits and in-world head portraits. The in-world crew bodies are procedural low-poly geometry with character-specific accent colours and are not rigged 3D models. Exact face, hair, suit and accessories matching the references requires creating and validating rigged GLB/GLTF assets, which are not included in this package.
 
 Some source images have opaque backgrounds baked into the pixels. The application uses a CSS blend treatment on known opaque previews; it does not destructively overwrite the originals or claim that those files have been perfectly background-removed.
 

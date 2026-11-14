@@ -188,16 +188,22 @@ function EquipmentObject({ spec, selected, onSelect }: { spec: EquipmentSpec; se
   );
 }
 
-function Astronaut({ target, accentColor, characterImage, characterName }: {
+function Astronaut({ target, accentColor, characterImage, characterName, celebrating }: {
   target: [number, number, number];
   accentColor: string;
   characterImage: string;
   characterName: string;
+  celebrating: boolean;
 }) {
   const ref = useRef<THREE.Group>(null);
   useFrame((_, delta) => {
     if (!ref.current) return;
     const group = ref.current;
+    if (celebrating) {
+      group.position.y = 0.02 + Math.max(0, Math.sin(performance.now() / 210)) * 0.75;
+      group.rotation.y += delta * 1.6;
+      return;
+    }
     const dx = target[0] - group.position.x;
     const dz = target[2] - group.position.z;
     const distance = Math.hypot(dx, dz);
@@ -235,7 +241,6 @@ function Astronaut({ target, accentColor, characterImage, characterName }: {
         <mesh position={[-0.18, 0.26, 0.03]}><capsuleGeometry args={[0.14, 0.48, 4, 8]} /><meshStandardMaterial color="#f1f3f4" /></mesh>
         <mesh position={[0.18, 0.26, 0.03]}><capsuleGeometry args={[0.14, 0.48, 4, 8]} /><meshStandardMaterial color="#f1f3f4" /></mesh>
         <mesh position={[0, 0.89, -0.34]}><boxGeometry args={[0.76, 0.75, 0.3]} /><meshStandardMaterial color="#dce2e5" roughness={0.55} /></mesh>
-        <mesh position={[0, 0.4, 0.1]}><boxGeometry args={[0.65, 0.11, 0.42]} /><meshStandardMaterial color={accentColor} /></mesh>
       </group>
     </group>
   );
@@ -360,7 +365,7 @@ function Scene({ planet, mission, onSelectEquipment, selectedEquipmentId, accent
       <Building position={[9, 0, -1]} title="GREENHOUSE" color="#54785b" size={[3.6, 1.5, 4]} onClick={() => selection("greenhouse-rack", [9, 0, -1])} />
       <Building position={[-5, 0, 5]} title="AIRLOCK" color="#89979d" size={[3.4, 1.5, 2.8]} onClick={() => selection("airlock-panel", [-5, 0, 5])} />
       {EQUIPMENT_CATALOG.map((item) => <EquipmentObject key={item.id} spec={item} selected={selectedEquipmentId === item.id} onSelect={() => selection(item.id, item.position)} />)}
-      <Astronaut target={targetRef.current} accentColor={accentColor} characterImage={characterImage} characterName={characterName} />
+      <Astronaut target={targetRef.current} accentColor={accentColor} characterImage={characterImage} characterName={characterName} celebrating={mission.status === "SUCCESS"} />
       {supportCrew.map((crew, index) => (
         <CrewFigure
           key={crew.member.id}

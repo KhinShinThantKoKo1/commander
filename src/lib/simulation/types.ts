@@ -131,6 +131,9 @@ export interface MissionState {
   activeIncident: MissionIncident | null;
   resolvedIncidentIds: string[];
   objectives: MissionObjective[];
+  challengeLives: number;
+  completedChallengeDays: number[];
+  challengeWrongChoices: Record<string, string[]>;
   eventFlags: string[];
   telemetry: MissionLogEntry[];
   lastMessage: string;
@@ -143,6 +146,8 @@ export type MissionCommand =
   | { type: "SET_SPEED"; speed: 0 | 1 | 3 }
   | { type: "TOGGLE_SYSTEM"; systemId: string; enabled: boolean }
   | { type: "DECIDE"; incidentId: string; choiceId: string }
+  | { type: "ANSWER_DAILY_CHALLENGE"; day: number; choiceId: string }
+  | { type: "RESTART_DAY_ONE" }
   | { type: "INTERACT"; equipmentId: string; crewId?: string }
   | { type: "OPERATE"; equipmentId: string; actionId: string; crewId?: string };
 

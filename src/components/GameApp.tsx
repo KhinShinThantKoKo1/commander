@@ -2,9 +2,13 @@
 
 import dynamic from "next/dynamic";
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { areDailyObjectivesComplete, CHARACTER_ROSTER, getEducationalHint, TRAINING_ASSUMPTIONS } from "@/lib/simulation/engine";
+import MissionBriefing from "@/components/MissionBriefing";
+import SoundToggle from "@/components/SoundToggle";
+import { areDailyObjectivesComplete, areDailyRequirementsComplete, CHARACTER_ROSTER, getEducationalHint, isDailyChallengeComplete, TRAINING_ASSUMPTIONS } from "@/lib/simulation/engine";
 import { EQUIPMENT_CATALOG } from "@/lib/simulation/equipment";
+import { getDailyChallenge } from "@/lib/simulation/dailyChallenges";
 import { GAMEPLAY_ASSUMPTIONS, SCIENCE_REFERENCES, SCIENCE_DATA_VERSION } from "@/lib/simulation/science";
+import { playSoundEffect } from "@/lib/soundEffects";
 import type { CreateMissionInput, Difficulty, MissionCommand, MissionState, Planet, SpaceWeatherChallenge } from "@/lib/simulation/types";
 
 const WorldCanvas = dynamic(() => import("@/components/WorldCanvas"), { ssr: false, loading: () => <div className="world-loading">BUILDING THE OUTPOST…</div> });
@@ -56,6 +60,7 @@ export default function GameApp() {
   const [miraReply, setMiraReply] = useState("Hi! I'm MIRA. I can help you think through the equipment and resource clues without choosing for you.");
   const [playerPosition, setPlayerPosition] = useState<[number, number]>([0, 1.5]);
   const [showScience, setShowScience] = useState(false);
+  const [briefingOpen, setBriefingOpen] = useState(false);
   const [restoring, setRestoring] = useState(true);
   const [spaceWeatherChallenge, setSpaceWeatherChallenge] = useState<SpaceWeatherChallenge | null>(null);
   const [spaceWeatherAnswer, setSpaceWeatherAnswer] = useState<string | null>(null);
@@ -158,8 +163,25 @@ export default function GameApp() {
       });
       const payload = await response.json() as { mission?: MissionState; error?: string };
       if (!response.ok || !payload.mission) throw new Error(payload.error ?? "The mission command could not be saved.");
-      setMission(payload.mission);
-      missionRef.current = payload.mission;
+      const nextMission = payload.mission;
+      if (current.status === "ACTIVE" && nextMission.status === "SUCCESS") {
+        playSoundEffect("victory");
+      } else if (current.status === "ACTIVE" && nextMission.status !== "ACTIVE") {
+        playSoundEffect("defeat");
+      } else if (!current.activeIncident && nextMission.activeIncident) {
+        playSoundEffect("alert");
+      } else if (command.type === "ANSWER_DAILY_CHALLENGE") {
+        if (nextMission.challengeLives < current.challengeLives) playSoundEffect("incorrect");
+        else if (!isDailyChallengeComplete(current) && isDailyChallengeComplete(nextMission)) playSoundEffect("correct");
+      } else if (command.type === "ADVANCE" && nextMission.day > current.day) {
+        playSoundEffect("dayComplete");
+      } else if (nextMission.objectives.some((objective) =>
+        objective.complete && !current.objectives.some((previous) => previous.id === objective.id && previous.complete)
+      )) {
+        playSoundEffect("objective");
+      }
+      setMission(nextMission);
+      missionRef.current = nextMission;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unexpected mission error.");
     } finally {
@@ -174,13 +196,13 @@ export default function GameApp() {
     const timer = window.setInterval(() => {
       const current = missionRef.current;
       if (!current || current.status !== "ACTIVE" || current.speed === 0 || current.activeIncident) return;
-      if (current.elapsedMinutes >= current.day * MINUTES_PER_DAY - 1 && !areDailyObjectivesComplete(current)) return;
+      if (current.elapsedMinutes >= current.day * MINUTES_PER_DAY - 1 && !areDailyRequirementsComplete(current)) return;
       void commandRef.current({ type: "ADVANCE", minutes: current.speed * SIMULATION_MINUTES_PER_REAL_SECOND });
     }, 1000);
     return () => window.clearInterval(timer);
   }, [mission?.id, mission?.speed, mission?.activeIncident?.id, mission?.status]);
 
-  async function launchMission() {
+  async function launchMission(): Promise<boolean> {
     setBusy(true);
     setError("");
     try {
@@ -192,14 +214,17 @@ export default function GameApp() {
       missionRef.current = data.mission;
       window.localStorage.setItem("launchlab:lastMissionId", data.mission.id);
       setSelectedEquipmentId(null);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not launch mission.");
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
   function chooseCharacter(id: string) {
+    if (id !== selectedCharacter) playSoundEffect("select");
     setSelectedCharacter(id);
     const character = CHARACTERS.find((item) => item.id === id);
     if (character?.custom && playerName === "Cadet") setPlayerName("");
@@ -207,6 +232,7 @@ export default function GameApp() {
   }
 
   function toggleCrew(id: string) {
+    if (id !== selectedCharacter && (supportCrew.includes(id) || supportCrew.length < 3)) playSoundEffect("select");
     setSupportCrew((current) => {
       if (id === selectedCharacter) return current;
       if (current.includes(id)) return current.filter((value) => value !== id);
@@ -215,8 +241,14 @@ export default function GameApp() {
   }
 
   function selectEquipment(id: string) {
+    playSoundEffect("select");
     setSelectedEquipmentId(id);
     void dispatch({ type: "INTERACT", equipmentId: id, crewId: selectedCrewId ?? undefined });
+  }
+
+  function selectCrewMember(id: string | null) {
+    playSoundEffect("select");
+    setSelectedCrewId(id);
   }
 
   function answerMira(question: string) {
@@ -312,6 +344,24 @@ export default function GameApp() {
 
   if (!mission && restoring) return <main className="restore-screen"><div className="mira-orb">M</div><p>CHECKING YOUR SAVED MISSION…</p></main>;
 
+  if (!mission && briefingOpen) {
+    const selectedPlayer = CHARACTERS.find((character) => character.id === selectedCharacter) ?? CHARACTERS[6];
+    const briefingCrew = [
+      selectedPlayer,
+      ...supportCrew.map((id) => CHARACTERS.find((character) => character.id === id)).filter((character): character is CharacterInfo => character !== undefined)
+    ];
+    return <MissionBriefing
+      playerName={playerName.trim()}
+      crew={briefingCrew}
+      planet={planet}
+      difficulty={difficulty}
+      difficultyLabel={GAMEPLAY_ASSUMPTIONS.difficulties[difficulty].label}
+      launchError={error}
+      onBack={() => { setError(""); setBriefingOpen(false); }}
+      onLaunch={launchMission}
+    />;
+  }
+
   if (!mission) {
     return (
       <main className="launch-shell">
@@ -319,6 +369,7 @@ export default function GameApp() {
         <header className="brand-header">
           <div className="brand-mark"><img src="/assets/launch-lab-logo.png" alt="Launch Lab" /></div>
           <div className="brand-meta"><span>ASTRONAUT TRAINER</span><span className="live-dot">MISSION PREPARATION</span></div>
+          <SoundToggle />
         </header>
         <section className="intro-row">
           <div>
@@ -354,11 +405,11 @@ export default function GameApp() {
             </div>
             <div className="section-heading planet-heading"><span className="step-index">03</span><div><h2>Select your destination</h2><p>Different worlds require different survival strategies.</p></div></div>
             <div className="planet-grid">
-              <button type="button" className={`planet-card moon ${planet === "MOON" ? "chosen" : ""}`} onClick={() => setPlanet("MOON")}>
+              <button type="button" className={`planet-card moon ${planet === "MOON" ? "chosen" : ""}`} onClick={() => { if (planet !== "MOON") playSoundEffect("select"); setPlanet("MOON"); }}>
                 <span className="planet-art moon-art"><span className="moon-disc" /><span className="crater crater-a" /><span className="crater crater-b" /></span>
                 <strong>THE MOON</strong><small>South Pole · Variable illumination · Vacuum</small><span className="planet-select">{planet === "MOON" ? "SELECTED" : "SELECT DESTINATION"}</span>
               </button>
-              <button type="button" className={`planet-card mars ${planet === "MARS" ? "chosen" : ""}`} onClick={() => setPlanet("MARS")}>
+              <button type="button" className={`planet-card mars ${planet === "MARS" ? "chosen" : ""}`} onClick={() => { if (planet !== "MARS") playSoundEffect("select"); setPlanet("MARS"); }}>
                 <span className="planet-art mars-art"><span className="mars-disc" /><span className="mars-shadow" /></span>
                 <strong>MARS</strong><small>Thin CO₂ atmosphere · Dust · Delayed communications</small><span className="planet-select">{planet === "MARS" ? "SELECTED" : "SELECT DESTINATION"}</span>
               </button>
@@ -367,7 +418,7 @@ export default function GameApp() {
             <div className="difficulty-grid">
               {DIFFICULTIES.map((level) => {
                 const profile = GAMEPLAY_ASSUMPTIONS.difficulties[level];
-                return <button type="button" key={level} aria-pressed={difficulty === level} className={`difficulty-card ${difficulty === level ? "chosen" : ""}`} onClick={() => setDifficulty(level)}>
+                return <button type="button" key={level} aria-pressed={difficulty === level} className={`difficulty-card ${difficulty === level ? "chosen" : ""}`} onClick={() => { if (difficulty !== level) playSoundEffect("select"); setDifficulty(level); }}>
                   <strong>{profile.label}</strong><small>{profile.description}</small><span>{profile.batteryKwh} kWh battery · {profile.spareParts} spare parts</span><em>{difficulty === level ? "SELECTED" : "SELECT DIFFICULTY"}</em>
                 </button>;
               })}
@@ -378,11 +429,11 @@ export default function GameApp() {
               <div><span>ASSUMPTIONS</span><strong>Versioned science registry</strong><small>NASA references plus labeled training-only parameters.</small></div>
             </div>
             {error && <div className="error-banner">{error}</div>}
-            <button type="button" className="primary-launch" disabled={busy || playerName.trim().length === 0 || supportCrew.length !== 3} onClick={launchMission}>{busy ? "PREPARING LAUNCH…" : `LAUNCH ${planet === "MOON" ? "LUNAR" : "MARS"} MISSION`} <span>↗</span></button>
-            <p className="form-note">A saved mission is created on the server. Use the Docker deployment for persistent PostgreSQL saves.</p>
+            <button type="button" className="primary-launch" disabled={busy || playerName.trim().length === 0 || supportCrew.length !== 3} onClick={() => { playSoundEffect("select"); setError(""); setBriefingOpen(true); }}>CONTINUE TO FIELD GUIDE <span>↗</span></button>
+            <p className="form-note">Complete your outpost orientation and crew readiness check before launch.</p>
           </div>
           <aside className="setup-aside">
-            <div className="aside-card"><span className="eyebrow">THE MISSION</span><div className="aside-big-number">07<span>DAYS</span></div><p>Keep your four-person crew safe and complete three different objectives every day.</p><div className="aside-divider" /><div className="aside-check"><span>01</span> 3 objectives each day</div><div className="aside-check"><span>02</span> Different Moon and Mars agendas</div><div className="aside-check"><span>03</span> Complete all 21 to win</div></div>
+            <div className="aside-card"><span className="eyebrow">THE MISSION</span><div className="aside-big-number">07<span>DAYS</span></div><p>Keep your four-person crew safe, complete three 3D objectives, and answer a new astronaut challenge each day.</p><div className="aside-divider" /><div className="aside-check"><span>01</span> 3 actionable objectives each day</div><div className="aside-check"><span>02</span> Planet-specific NASA/CSA scenarios</div><div className="aside-check"><span>03</span> 5 challenge lives for the campaign</div><div className="aside-check"><span>04</span> Survive all 7 days to win</div></div>
             <div className="aside-note"><span>✦</span><div><strong>Learn by doing</strong><p>MIRA gives hints, not answers. Your choices change the simulation state.</p></div></div>
             <button type="button" className="science-toggle" onClick={() => setShowScience(!showScience)}>{showScience ? "Hide" : "View"} science references ↗</button>
             {showScience && <div className="science-small"><a href={SCIENCE_REFERENCES.bvad.url} target="_blank" rel="noreferrer">NASA BVAD Rev. 2</a><a href={SCIENCE_REFERENCES.eclss.url} target="_blank" rel="noreferrer">NASA ECLSS</a><a href="https://trek.nasa.gov/moon/" target="_blank" rel="noreferrer">NASA Moon Trek</a></div>}
@@ -402,6 +453,11 @@ export default function GameApp() {
   const remainderMinutes = minutesUntilNextDay % 60;
   const correctSpaceWeatherOption = spaceWeatherChallenge?.options.find((option) => option.id === spaceWeatherChallenge.correctOptionId);
   const spaceWeatherAnswerIsCorrect = spaceWeatherAnswer !== null && spaceWeatherAnswer === spaceWeatherChallenge?.correctOptionId;
+  const dailyChallenge = getDailyChallenge(mission.planet, mission.day);
+  const dailyChallengeComplete = isDailyChallengeComplete(mission);
+  const dailyChallengeWrongChoices = mission.challengeWrongChoices[String(mission.day)] ?? [];
+  const correctDailyChallengeOption = dailyChallenge?.options.find((option) => option.id === dailyChallenge.correctOptionId);
+  const dailyRequirementsComplete = dailyObjectivesComplete && dailyChallengeComplete;
   const miraPositionStyle = miraPosition
     ? { left: miraPosition.left, top: miraPosition.top, right: "auto" as const, bottom: "auto" as const }
     : undefined;
@@ -412,32 +468,41 @@ export default function GameApp() {
         <div className="game-brand"><img src="/assets/launch-lab-logo.png" alt="Launch Lab" /><span>OUTPOST OPERATIONS</span></div>
         <div className="mission-clock"><span className="pulse-dot" />{timeLabel(mission.elapsedMinutes, mission.day, mission.status)}<small>{mission.planet === "MOON" ? "LUNAR BASE" : "MARS BASE"} · {GAMEPLAY_ASSUMPTIONS.difficulties[mission.difficulty ?? "STANDARD"].label.toUpperCase()}</small></div>
         <div className="header-controls">
-          <button type="button" aria-label="Pause simulation" aria-pressed={mission.speed === 0} onClick={() => void dispatch({ type: "SET_SPEED", speed: 0 })} className={mission.speed === 0 ? "speed-active" : ""}>Ⅱ Pause</button>
-          <button type="button" aria-label="Set simulation speed to normal" aria-pressed={mission.speed === 1} onClick={() => void dispatch({ type: "SET_SPEED", speed: 1 })} className={mission.speed === 1 ? "speed-active" : ""}>1× Normal</button>
-          <button type="button" aria-label="Set simulation speed to fast" aria-pressed={mission.speed === 3} onClick={() => void dispatch({ type: "SET_SPEED", speed: 3 })} className={mission.speed === 3 ? "speed-active" : ""}>3× Fast</button>
-          <button type="button" className="exit-button" onClick={() => { setMission(null); missionRef.current = null; setSelectedCrewId(null); }}>Exit mission</button>
+          <SoundToggle />
+          <div className="challenge-lives" role="img" aria-label={`${mission.challengeLives} of 5 challenge lives remaining`}>
+            <span>CHALLENGE LIVES</span>
+            <strong aria-hidden="true">{Array.from({ length: 5 }, (_, index) => <i className={index < mission.challengeLives ? "life-live" : "life-lost"} key={index}>♥</i>)}</strong>
+          </div>
+          <button type="button" aria-label="Pause simulation" aria-pressed={mission.speed === 0} onClick={() => { playSoundEffect("select"); void dispatch({ type: "SET_SPEED", speed: 0 }); }} className={mission.speed === 0 ? "speed-active" : ""}>Ⅱ Pause</button>
+          <button type="button" aria-label="Set simulation speed to normal" aria-pressed={mission.speed === 1} onClick={() => { playSoundEffect("select"); void dispatch({ type: "SET_SPEED", speed: 1 }); }} className={mission.speed === 1 ? "speed-active" : ""}>1× Normal</button>
+          <button type="button" aria-label="Set simulation speed to fast" aria-pressed={mission.speed === 3} onClick={() => { playSoundEffect("select"); void dispatch({ type: "SET_SPEED", speed: 3 }); }} className={mission.speed === 3 ? "speed-active" : ""}>3× Fast</button>
+          <button type="button" className="exit-button" onClick={() => { playSoundEffect("select"); setMission(null); missionRef.current = null; setSelectedCrewId(null); }}>Exit mission</button>
         </div>
       </header>
       <section className="day-progress-panel" aria-label="Mission day progress">
         <div className="day-progress-copy">
           <strong>DAY {mission.day} OF 7</strong>
-          <span>{mission.day < 7 ? dailyObjectivesComplete ? `${hoursUntilNextDay}h ${String(remainderMinutes).padStart(2, "0")}m of simulation until Day ${mission.day + 1}` : `Daily objectives: ${completedDailyObjectives}/3 complete` : `Final mission day · ${completedDailyObjectives}/3 objectives complete`}</span>
+          <span>{mission.day < 7
+            ? dailyRequirementsComplete
+              ? `${hoursUntilNextDay}h ${String(remainderMinutes).padStart(2, "0")}m of simulation until Day ${mission.day + 1}`
+              : `Objectives: ${completedDailyObjectives}/3 · Challenge: ${dailyChallengeComplete ? "complete" : "pending"}`
+            : `Final mission day · ${completedDailyObjectives}/3 objectives · challenge ${dailyChallengeComplete ? "complete" : "pending"}`}</span>
         </div>
         <div className="day-progress-track" role="progressbar" aria-label={`Day ${mission.day} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(dayProgress)}>
           <div className="day-progress-fill" style={{ width: `${dayProgress}%` }} />
         </div>
-        <p>Days advance automatically only after all three daily objectives are complete. Unfinished objectives pause the simulation at day’s end. A day takes about 5 minutes at Normal speed or 1 minute 36 seconds at Fast speed.</p>
+        <p>Complete all three objectives and the daily astronaut challenge to advance. The simulation pauses at day’s end until both are done. A day takes about 5 minutes at Normal speed or 1 minute 36 seconds at Fast speed.</p>
         {mission.day < 7 && <button
           type="button"
           className="day-advance-button"
-          disabled={mission.status !== "ACTIVE" || Boolean(mission.activeIncident) || !dailyObjectivesComplete}
-          title={mission.activeIncident ? "Resolve the current alert before advancing." : !dailyObjectivesComplete ? `Complete all three objectives for Day ${mission.day} before advancing (${completedDailyObjectives}/3 complete).` : "Simulate the remaining time until the next day; the simulation will stop if an alert needs your decision."}
+          disabled={mission.status !== "ACTIVE" || Boolean(mission.activeIncident) || !dailyRequirementsComplete}
+          title={mission.activeIncident ? "Resolve the current alert before advancing." : !dailyObjectivesComplete ? `Complete all three objectives for Day ${mission.day} before advancing (${completedDailyObjectives}/3 complete).` : !dailyChallengeComplete ? "Answer the daily astronaut challenge before advancing." : "Simulate the remaining time until the next day; the simulation will stop if an alert needs your decision."}
           aria-label={`Advance simulation to Day ${mission.day + 1}`}
-          onClick={() => void dispatch({ type: "ADVANCE", minutes: minutesUntilNextDay })}
+          onClick={() => { playSoundEffect("select"); void dispatch({ type: "ADVANCE", minutes: minutesUntilNextDay }); }}
         >
-          {mission.activeIncident ? "Resolve alert first" : dailyObjectivesComplete ? `Advance to Day ${mission.day + 1}` : "Complete today's objectives"}
+          {mission.activeIncident ? "Resolve alert first" : !dailyObjectivesComplete ? "Complete today's objectives" : !dailyChallengeComplete ? "Answer today's challenge" : `Advance to Day ${mission.day + 1}`}
         </button>}
-        {mission.day === 7 && <span className="day-final-note">{dailyObjectivesComplete ? "All daily objectives complete. Continue simulation to finish the campaign." : `Complete today's objectives (${completedDailyObjectives}/3) to finish the campaign.`}</span>}
+        {mission.day === 7 && <span className="day-final-note">{dailyRequirementsComplete ? "Day 7 objectives and challenge complete. Keep the crew safe through the final hours." : !dailyObjectivesComplete ? `Complete today's objectives (${completedDailyObjectives}/3) to finish the campaign.` : "Answer today's challenge to finish the campaign."}</span>}
       </section>
       <section className="telemetry-strip">
         <Metric label="POWER" icon="⚡" value={`${fmt(mission.resources.solarGenerationKw)} kW`} detail={`${fmt(mission.resources.electricalDemandKw)} kW demand`} warn={mission.resources.powerUnmetKw > 0.01} />
@@ -450,7 +515,26 @@ export default function GameApp() {
       </section>
       {error && <div className="game-error">{error}</div>}
       {mission.activeIncident && <section className="incident-banner"><div className="incident-icon">!</div><div><span>{mission.activeIncident.severity} ALERT · {mission.activeIncident.kind.replaceAll("_", " ")}</span><strong>{mission.activeIncident.title}</strong><p>{mission.activeIncident.description}</p></div><span className="incident-paused">SIM PAUSED FOR DECISION</span></section>}
-      {mission.status !== "ACTIVE" && <section className={`mission-end ${mission.status.toLowerCase()}`}><div className="end-symbol">{mission.status === "SUCCESS" ? "✦" : "!"}</div><div><span>MISSION {mission.status === "SUCCESS" ? "COMPLETE" : "ENDED"}</span><strong>{mission.lastMessage}</strong><p>Review the operational log to see how your decisions affected the crew and equipment.</p></div><button type="button" onClick={() => { setMission(null); missionRef.current = null; setSelectedCrewId(null); }}>NEW MISSION</button></section>}
+      {mission.status !== "ACTIVE" && <section className={`mission-end ${mission.status.toLowerCase()}`}><div className="end-symbol">{mission.status === "SUCCESS" ? "✦" : "!"}</div><div><span>MISSION {mission.status === "SUCCESS" ? "COMPLETE" : "ENDED"}</span><strong>{mission.lastMessage}</strong><p>Review the operational log to see how your decisions affected the crew and equipment.</p></div><button type="button" onClick={() => {
+        playSoundEffect("select");
+        if (mission.challengeLives === 0) void dispatch({ type: "RESTART_DAY_ONE" });
+        else { setMission(null); missionRef.current = null; setSelectedCrewId(null); }
+      }}>      {mission.challengeLives === 0 ? "RESTART DAY 1" : "NEW MISSION"}</button></section>}
+      {mission.status === "SUCCESS" && <section className="victory-overlay" role="status" aria-live="polite">
+        <div className="celebration-confetti" aria-hidden="true">
+          {Array.from({ length: 36 }, (_, index) => <span key={index} style={{
+            left: `${(index * 37) % 100}%`,
+            animationDelay: `-${(index % 10) * 0.35}s`,
+            backgroundColor: ["#71c8d6", "#f2d08d", "#75c69a", "#f07d75", "#d9a5ff"][index % 5]
+          }} />)}
+        </div>
+        <div className="victory-card">
+          <img className="victory-character" src={playerCharacter.image} alt={`${playerCharacter.name} celebrating`} />
+          <span>MISSION COMPLETE</span>
+          <h2>CONGRATULATIONS, {mission.playerName}!</h2>
+          <p>Seven days survived with {mission.challengeLives} challenge {mission.challengeLives === 1 ? "life" : "lives"} remaining.</p>
+        </div>
+      </section>}
       <section className="game-layout">
         <aside className="game-sidebar left-sidebar">
           <div className="sidebar-section">
@@ -463,7 +547,7 @@ export default function GameApp() {
               <span className="crew-avatar" style={{ borderColor: character?.accent ?? "#758ca0" }}>{character ? <img src={character.image} alt="" className={character.opaque ? "opaque-image" : ""} /> : "👩‍🚀"}</span>
               <span><strong>{member.name}</strong><small>{member.role}</small><small className="crew-task">{member.currentTask}</small></span>
               {index > 0
-                ? <button type="button" className="crew-assign-button" aria-pressed={selected} onClick={() => setSelectedCrewId(selected ? null : member.id)}>{selected ? "SELECTED" : "ASSIGN"}</button>
+                ? <button type="button" className="crew-assign-button" aria-pressed={selected} onClick={() => selectCrewMember(selected ? null : member.id)}>{selected ? "SELECTED" : "ASSIGN"}</button>
                 : <span className="crew-role-tag">YOU</span>}
               <i className={member.fatigue > 65 ? "fatigue-high" : ""} title={`Game fatigue indicator ${Math.round(member.fatigue)}%`}>{Math.round(member.fatigue)}%</i>
             </div>;
@@ -498,16 +582,16 @@ export default function GameApp() {
         </aside>
         <section className="world-column">
           <div className="world-topline"><span><i /> LIVE 3D OUTPOST</span><span>DAY {mission.day} ENVIRONMENT · {mission.planet === "MOON" ? "LUNAR REGOLITH" : "MARTIAN TERRAIN"} · CLICK-TO-WALK</span></div>
-          <WorldCanvas planet={mission.planet} mission={mission} accentColor={playerCharacter.accent} characterImage={playerCharacter.image} characterName={playerCharacter.name} supportCrew={supportCrewVisuals} selectedCrewId={selectedCrewId} onSelectCrew={setSelectedCrewId} selectedEquipmentId={selectedEquipmentId} onSelectEquipment={selectEquipment} onMove={(x, z) => setPlayerPosition([x, z])} />
+          <WorldCanvas planet={mission.planet} mission={mission} accentColor={playerCharacter.accent} characterImage={playerCharacter.image} characterName={playerCharacter.name} supportCrew={supportCrewVisuals} selectedCrewId={selectedCrewId} onSelectCrew={selectCrewMember} selectedEquipmentId={selectedEquipmentId} onSelectEquipment={selectEquipment} onMove={(x, z) => setPlayerPosition([x, z])} />
           <div className="world-bottomline"><span>POSITION {fmt(playerPosition[0], 1)}, {fmt(playerPosition[1], 1)}</span><span>RENDER FPS DOES NOT DRIVE SCIENCE CALCULATIONS</span><a className="log-jump" href="#activity-log">INSPECTION FEEDBACK ↓</a></div>
           {equipment && <div className="equipment-panel">
-            <button className="close-equipment" onClick={() => setSelectedEquipmentId(null)}>×</button>
+            <button className="close-equipment" onClick={() => { playSoundEffect("select"); setSelectedEquipmentId(null); }}>×</button>
             <div className="equipment-panel-head"><span className="equipment-icon">{equipment.icon}</span><div><span>{equipment.room}</span><strong>{equipment.name}</strong></div></div>
             <p>{equipment.description}</p>
-            <div className="crew-operator-line" role="status"><span>OPERATOR</span><strong>{selectedOperator?.name ?? mission.playerName} · {selectedOperator?.role ?? "Commander"}</strong>{selectedCrewId && <button type="button" onClick={() => setSelectedCrewId(null)}>USE COMMANDER</button>}</div>
+            <div className="crew-operator-line" role="status"><span>OPERATOR</span><strong>{selectedOperator?.name ?? mission.playerName} · {selectedOperator?.role ?? "Commander"}</strong>{selectedCrewId && <button type="button" onClick={() => selectCrewMember(null)}>USE COMMANDER</button>}</div>
             {selectedSystem && <div className="equipment-state"><span>STATE <b className={`state-${selectedSystem.status.toLowerCase()}`}>{selectedSystem.status}</b></span><span>POWER <b>{fmt(selectedSystem.powerKw)} kW</b></span><span>CONDITION <b>{selectedSystem.condition}%</b></span></div>}
             <p className="equipment-feedback" role="status" aria-live="polite">{mission.lastMessage}</p>
-            <div className="equipment-actions">{equipment.actions.map((action) => <button type="button" key={action.id} disabled={busy || mission.status !== "ACTIVE"} aria-label={`${action.label}, takes ${action.durationMinutes} simulated minutes`} onClick={() => void dispatch({ type: "OPERATE", equipmentId: equipment.id, actionId: action.id, crewId: selectedCrewId ?? undefined })}>
+            <div className="equipment-actions">{equipment.actions.map((action) => <button type="button" key={action.id} disabled={busy || mission.status !== "ACTIVE"} aria-label={`${action.label}, takes ${action.durationMinutes} simulated minutes`} onClick={() => { playSoundEffect("select"); void dispatch({ type: "OPERATE", equipmentId: equipment.id, actionId: action.id, crewId: selectedCrewId ?? undefined }); }}>
               <strong>{action.label}{busy ? " · Working…" : ""}</strong>
               <small>{action.durationMinutes === 0 ? "No simulated time" : `Takes ${action.durationMinutes} simulated minutes`}</small>
               <small>Needed: {action.requirements.join(" · ")}</small>
@@ -517,9 +601,44 @@ export default function GameApp() {
           </div>}
         </section>
         <aside className="game-sidebar right-sidebar">
-          {mission.activeIncident && <div className="decision-card"><div className="sidebar-title">CHOOSE YOUR RESPONSE <span>{String(mission.activeIncident.choices.length).padStart(2, "0")} OPTIONS</span></div><p className="decision-intro">Read the evidence. Consider the system dependencies before committing the crew.</p>{mission.activeIncident.evidence.map((line) => <div className="evidence-row" key={line}><span>↳</span>{line}</div>)}<div className="choice-list">{mission.activeIncident.choices.map((choice, index) => <button type="button" key={choice.id} disabled={busy || (choice.cost.spareParts ?? 0) > mission.resources.spareParts} onClick={() => void dispatch({ type: "DECIDE", incidentId: mission.activeIncident!.id, choiceId: choice.id })}><span>{index + 1}</span><div><strong>{choice.title}</strong><small>{choice.detail}</small><em>{choice.cost.minutes ?? 1} min{choice.cost.batteryKwh ? ` · ${choice.cost.batteryKwh} kWh` : ""}{choice.cost.spareParts ? ` · ${choice.cost.spareParts} spare part` : ""}</em></div></button>)}</div><small className="training-tag">SCENARIO RESPONSE · NOT A REAL FLIGHT PROCEDURE</small></div>}
+          {mission.activeIncident && <div className="decision-card"><div className="sidebar-title">CHOOSE YOUR RESPONSE <span>{String(mission.activeIncident.choices.length).padStart(2, "0")} OPTIONS</span></div><p className="decision-intro">Read the evidence. Consider the system dependencies before committing the crew.</p>{mission.activeIncident.evidence.map((line) => <div className="evidence-row" key={line}><span>↳</span>{line}</div>)}<div className="choice-list">{mission.activeIncident.choices.map((choice, index) => <button type="button" key={choice.id} disabled={busy || (choice.cost.spareParts ?? 0) > mission.resources.spareParts} onClick={() => { playSoundEffect("select"); void dispatch({ type: "DECIDE", incidentId: mission.activeIncident!.id, choiceId: choice.id }); }}><span>{index + 1}</span><div><strong>{choice.title}</strong><small>{choice.detail}</small><em>{choice.cost.minutes ?? 1} min{choice.cost.batteryKwh ? ` · ${choice.cost.batteryKwh} kWh` : ""}{choice.cost.spareParts ? ` · ${choice.cost.spareParts} spare part` : ""}</em></div></button>)}</div><small className="training-tag">SCENARIO RESPONSE · NOT A REAL FLIGHT PROCEDURE</small></div>}
+          {dailyChallenge && <section className={`daily-challenge-card ${dailyChallengeComplete ? "complete" : ""}`} aria-labelledby="daily-challenge-title">
+            <header><div><span>DAY {mission.day} · ASTRONAUT SCENARIO</span><h2 id="daily-challenge-title">{dailyChallenge.title}</h2></div><b>{dailyChallengeComplete ? "COMPLETE" : `${mission.challengeLives} LIVES`}</b></header>
+            <p className="daily-challenge-scenario">{dailyChallenge.scenario}</p>
+            <p className="daily-challenge-question">{dailyChallenge.question}</p>
+            <div className="daily-challenge-options" role="group" aria-label={`Day ${mission.day} challenge choices`}>
+              {dailyChallenge.options.map((option) => {
+                const wrong = dailyChallengeWrongChoices.includes(option.id);
+                const correct = (dailyChallengeComplete || mission.challengeLives === 0) && option.id === dailyChallenge.correctOptionId;
+                return <button
+                  type="button"
+                  key={option.id}
+                  className={correct ? "correct" : wrong ? "incorrect" : ""}
+                  disabled={busy || mission.status !== "ACTIVE" || dailyChallengeComplete || wrong}
+                  onClick={() => { playSoundEffect("select"); void dispatch({ type: "ANSWER_DAILY_CHALLENGE", day: mission.day, choiceId: option.id }); }}
+                >
+                  <span>{option.id}</span>{option.text}
+                </button>;
+              })}
+            </div>
+            {!dailyChallengeComplete && mission.challengeLives > 0 && <p className="daily-challenge-hint">
+              {dailyChallengeWrongChoices.length > 0
+                ? "That choice is locked. Consider the evidence and try a different response; each incorrect choice costs one life."
+                : "Choose the safest evidence-based response. An incorrect choice costs one life."}
+            </p>}
+            {(dailyChallengeComplete || mission.challengeLives === 0) && <>
+              <div className={`daily-challenge-feedback ${dailyChallengeComplete ? "success" : "retry"}`}>
+                <strong>{dailyChallengeComplete ? "Correct response." : `Best response: ${correctDailyChallengeOption?.id ?? ""}`}</strong>
+                <p>{dailyChallenge.explanation}</p>
+              </div>
+            </>}
+            <a className="daily-challenge-reference" href={dailyChallenge.reference.url} target="_blank" rel="noreferrer">{dailyChallenge.reference.title} ↗</a>
+            {(dailyChallenge.reference.note ?? dailyChallenge.reference.notes) && <small className="daily-challenge-reference-note">{dailyChallenge.reference.note ?? dailyChallenge.reference.notes}</small>}
+            <small className="daily-challenge-note">Educational scenario based on real mission challenges; not a flight procedure or live safety system.</small>
+          </section>}
           <section className="space-weather-card" aria-labelledby="space-weather-title">
-            <header><div><span>LIVE NASA DONKI DATA</span><h2 id="space-weather-title">Space-weather challenge</h2></div><button type="button" onClick={() => void loadSpaceWeatherChallenge()} disabled={spaceWeatherLoading}>{spaceWeatherLoading ? "LOADING…" : "REFRESH"}</button></header>
+            <header><div><span>OPTIONAL NASA DONKI PRACTICE</span><h2 id="space-weather-title">Space-weather data practice</h2></div><button type="button" onClick={() => { playSoundEffect("select"); void loadSpaceWeatherChallenge(); }} disabled={spaceWeatherLoading}>{spaceWeatherLoading ? "LOADING…" : "REFRESH"}</button></header>
+            <small className="space-weather-note">Optional practice; incorrect answers here do not spend daily challenge lives.</small>
             {spaceWeatherLoading && !spaceWeatherChallenge && <p className="space-weather-status">Loading a recent solar-flare event from NASA DONKI…</p>}
             {spaceWeatherError && <p className="space-weather-error" role="alert">{spaceWeatherError}</p>}
             {spaceWeatherChallenge && <>
@@ -532,7 +651,7 @@ export default function GameApp() {
                   const correct = option.id === spaceWeatherChallenge.correctOptionId;
                   const selected = spaceWeatherAnswer === option.id;
                   const resultClass = answered && correct ? "correct" : selected ? "incorrect" : "";
-                  return <button type="button" key={option.id} className={`space-weather-option ${resultClass}`} aria-pressed={selected} disabled={answered} onClick={() => setSpaceWeatherAnswer(option.id)}>
+                  return <button type="button" key={option.id} className={`space-weather-option ${resultClass}`} aria-pressed={selected} disabled={answered} onClick={() => { playSoundEffect(correct ? "correct" : "incorrect"); setSpaceWeatherAnswer(option.id); }}>
                     <span>{option.id}</span>{option.text}
                   </button>;
                 })}
@@ -548,7 +667,7 @@ export default function GameApp() {
           </section>
           <div className="resource-mini"><div className="sidebar-title">SYSTEM STATUS</div>{mission.systems.map((system) => {
             const turnOn = system.status === "OFF";
-            return <div className="system-row" key={system.id}><span className={`system-light ${system.status.toLowerCase()}`} /><span>{system.name}</span><b>{system.status}</b><button aria-label={`${turnOn ? "Turn on" : "Turn off"} ${system.name}`} title={`${turnOn ? "Turn on" : "Turn off"} ${system.name}`} aria-pressed={!turnOn} disabled={busy || mission.status !== "ACTIVE" || system.status === "FAULTED"} onClick={() => void dispatch({ type: "TOGGLE_SYSTEM", systemId: system.id, enabled: turnOn })}>{turnOn ? "Turn on" : "Turn off"}</button></div>;
+            return <div className="system-row" key={system.id}><span className={`system-light ${system.status.toLowerCase()}`} /><span>{system.name}</span><b>{system.status}</b><button aria-label={`${turnOn ? "Turn on" : "Turn off"} ${system.name}`} title={`${turnOn ? "Turn on" : "Turn off"} ${system.name}`} aria-pressed={!turnOn} disabled={busy || mission.status !== "ACTIVE" || system.status === "FAULTED"} onClick={() => { playSoundEffect("select"); void dispatch({ type: "TOGGLE_SYSTEM", systemId: system.id, enabled: turnOn }); }}>{turnOn ? "Turn on" : "Turn off"}</button></div>;
           })}</div>
           <div className="resource-mini"><div className="sidebar-title">STORES <span>{mission.resources.spareParts} SPARES</span></div><div className="store-bar"><span>WASTEWATER</span><strong>{fmt(mission.resources.wastewaterKg)} kg</strong></div><div className="store-bar"><span>QUARANTINED WATER</span><strong>{fmt(mission.resources.quarantinedWaterKg)} kg</strong></div><div className="store-bar"><span>FOOD STORED</span><strong>{fmt(mission.resources.foodKg)} kg</strong></div><div className="store-bar"><span>SPARE PARTS</span><strong>{mission.resources.spareParts}</strong></div></div>
         </aside>

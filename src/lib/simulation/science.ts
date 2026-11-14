@@ -5,7 +5,7 @@ import type { Difficulty } from "./types";
  * the deliberately simplified starting inventory, equipment ratings and safety
  * boundaries used by this playable training scenario.
  */
-export const SCIENCE_DATA_VERSION = "2026-11-14-launch-lab-planet-objectives-1";
+export const SCIENCE_DATA_VERSION = "2026-11-15-launch-lab-daily-challenges-1";
 
 export const SCIENCE_REFERENCES = {
   bvad: {

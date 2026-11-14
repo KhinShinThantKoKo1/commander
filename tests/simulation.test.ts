@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { advanceMinutes, applyCommand, createMission, ensureDailyObjectives, getEducationalHint } from "../src/lib/simulation/engine";
+import { advanceMinutes, applyCommand, areDailyRequirementsComplete, createMission, ensureDailyChallengeProgress, ensureDailyObjectives, getEducationalHint, isDailyChallengeComplete } from "../src/lib/simulation/engine";
 import { EQUIPMENT_CATALOG } from "../src/lib/simulation/equipment";
-import type { CreateMissionInput } from "../src/lib/simulation/types";
+import { DAILY_CHALLENGES, getDailyChallenge } from "../src/lib/simulation/dailyChallenges";
+import type { CreateMissionInput, Planet } from "../src/lib/simulation/types";
 
 const input: CreateMissionInput = {
   planet: "MOON",
@@ -14,6 +15,55 @@ const createdAt = "2026-11-14T00:00:00.000Z";
 function mission() {
   return createMission("00000000-0000-4000-8000-000000000001", input, createdAt);
 }
+
+const DAILY_OBJECTIVE_ACTIONS: Record<Planet, [number, string, string, string][]> = {
+  MOON: [
+    [1, "day-1-oxygen-inspection", "oxygen-generator", "inspect"],
+    [1, "day-1-co2-inspection", "co2-scrubber", "inspect"],
+    [1, "day-1-habitat-inspection", "habitat-control", "inspect"],
+    [2, "day-2-water-processor-inspection", "water-processor", "inspect"],
+    [2, "day-2-water-analyzer-inspection", "water-test", "inspect"],
+    [2, "day-2-water-quality-check", "water-test", "verify-water"],
+    [3, "day-3-rover-inspection", "rover", "inspect"],
+    [3, "day-3-rover-survey", "rover", "rover-survey"],
+    [3, "day-3-array-inspection", "solar-array", "inspect"],
+    [4, "day-4-power-audit", "battery-bank", "battery-audit"],
+    [4, "day-4-load-shedding", "power-board", "essential-mode"],
+    [4, "day-4-communications-inspection", "communications-mast", "inspect"],
+    [5, "day-5-shelter-preparation", "radiation-shelter", "secure-shelter"],
+    [5, "day-5-shelter-inspection", "radiation-shelter", "inspect"],
+    [5, "day-5-airlock-inspection", "airlock-panel", "inspect"],
+    [6, "day-6-food-inventory", "food-store", "food-inventory"],
+    [6, "day-6-maintenance-inspection", "maintenance-bench", "inspect"],
+    [6, "day-6-airlock-cycle", "airlock-panel", "cycle-airlock"],
+    [7, "day-7-status-report", "communications-mast", "send-status"],
+    [7, "day-7-battery-inspection", "battery-bank", "inspect"],
+    [7, "day-7-food-inspection", "food-store", "inspect"]
+  ],
+  MARS: [
+    [1, "day-1-oxygen-inspection", "oxygen-generator", "inspect"],
+    [1, "day-1-co2-inspection", "co2-scrubber", "inspect"],
+    [1, "day-1-habitat-inspection", "habitat-control", "inspect"],
+    [2, "day-2-water-processor-inspection", "water-processor", "inspect"],
+    [2, "day-2-water-analyzer-inspection", "water-test", "inspect"],
+    [2, "day-2-water-quality-check", "water-test", "verify-water"],
+    [3, "day-3-rover-inspection", "rover", "inspect"],
+    [3, "day-3-rover-survey", "rover", "rover-survey"],
+    [3, "mars-day-3-maintenance-inspection", "maintenance-bench", "inspect"],
+    [4, "day-4-power-audit", "battery-bank", "battery-audit"],
+    [4, "day-4-load-shedding", "power-board", "essential-mode"],
+    [4, "day-4-communications-inspection", "communications-mast", "inspect"],
+    [5, "day-5-shelter-preparation", "radiation-shelter", "secure-shelter"],
+    [5, "day-5-shelter-inspection", "radiation-shelter", "inspect"],
+    [5, "mars-day-5-array-inspection", "solar-array", "inspect"],
+    [6, "day-6-food-inventory", "food-store", "food-inventory"],
+    [6, "mars-day-6-airlock-inspection", "airlock-panel", "inspect"],
+    [6, "day-6-airlock-cycle", "airlock-panel", "cycle-airlock"],
+    [7, "day-7-status-report", "communications-mast", "send-status"],
+    [7, "day-7-battery-inspection", "battery-bank", "inspect"],
+    [7, "day-7-food-inspection", "food-store", "inspect"]
+  ]
+};
 
 describe("Launch Lab simulation", () => {
   it("starts with four crew and separate oxygen and CO2 inventories", () => {
@@ -69,6 +119,7 @@ describe("Launch Lab simulation", () => {
     const stable = {
       ...started,
       objectives: started.objectives.map((objective) => ({ ...objective, complete: true })),
+      completedChallengeDays: [1],
       resources: { ...started.resources, batteryKwh: started.resources.batteryCapacityKwh },
       systems: started.systems.map((system) => ["greenhouse", "rover", "science-lab"].includes(system.id)
         ? { ...system, status: "OFF" as const }
@@ -100,11 +151,93 @@ describe("Launch Lab simulation", () => {
 
     const completedToday = {
       ...nearDayEnd,
-      objectives: nearDayEnd.objectives.map((objective) => ({ ...objective, complete: objective.day === 1 || objective.complete }))
+      objectives: nearDayEnd.objectives.map((objective) => ({ ...objective, complete: objective.day === 1 || objective.complete })),
+      completedChallengeDays: [1]
     };
     const advanced = advanceMinutes(completedToday, 2);
     expect(advanced.elapsedMinutes).toBe(1440);
     expect(advanced.day).toBe(2);
+  });
+
+  it("also requires the daily astronaut challenge before advancing to the next day", () => {
+    const started = mission();
+    const readyForChallenge = {
+      ...started,
+      elapsedMinutes: 1438,
+      objectives: started.objectives.map((objective) => ({ ...objective, complete: objective.day === 1 || objective.complete })),
+      resources: { ...started.resources, batteryKwh: started.resources.batteryCapacityKwh },
+      systems: started.systems.map((system) => ["greenhouse", "rover", "science-lab"].includes(system.id)
+        ? { ...system, status: "OFF" as const }
+        : system)
+    };
+
+    const held = advanceMinutes(readyForChallenge, 10);
+    expect(held.elapsedMinutes).toBe(1439);
+    expect(held.day).toBe(1);
+    expect(held.lastMessage).toContain("daily astronaut challenge");
+    expect(areDailyRequirementsComplete(held)).toBe(false);
+
+    const challengeComplete = { ...readyForChallenge, completedChallengeDays: [1] };
+    const advanced = advanceMinutes(challengeComplete, 2);
+    expect(advanced.elapsedMinutes).toBe(1440);
+    expect(advanced.day).toBe(2);
+  });
+
+  it("spends one campaign life per unique wrong choice and restarts at Day 1 when all five are lost", () => {
+    let state = mission();
+    for (let day = 1; day <= 5; day += 1) {
+      const challenge = getDailyChallenge("MOON", day)!;
+      const incorrect = challenge.options.find((option) => option.id !== challenge.correctOptionId)!;
+      state = { ...state, day, elapsedMinutes: (day - 1) * 1440 };
+      state = applyCommand(state, { type: "ANSWER_DAILY_CHALLENGE", day, choiceId: incorrect.id });
+      expect(state.challengeLives).toBe(5 - day);
+      if (day === 1) {
+        state = applyCommand(state, { type: "ANSWER_DAILY_CHALLENGE", day, choiceId: incorrect.id });
+        expect(state.challengeLives).toBe(4);
+      }
+      if (day < 5) expect(state.status).toBe("ACTIVE");
+    }
+
+    expect(state.status).toBe("FAILED");
+    expect(state.challengeLives).toBe(0);
+    expect(state.lastMessage).toContain("Restart the mission from Day 1");
+
+    const restarted = applyCommand(state, { type: "RESTART_DAY_ONE" });
+    expect(restarted.id).toBe(state.id);
+    expect(restarted.status).toBe("ACTIVE");
+    expect(restarted.day).toBe(1);
+    expect(restarted.elapsedMinutes).toBe(0);
+    expect(restarted.challengeLives).toBe(5);
+    expect(restarted.completedChallengeDays).toEqual([]);
+    expect(restarted.objectives.every((objective) => !objective.complete)).toBe(true);
+    expect(restarted.playerCharacterId).toBe(state.playerCharacterId);
+    expect(restarted.planet).toBe(state.planet);
+  });
+
+  it("completes the daily challenge on a correct response without spending a life", () => {
+    const started = mission();
+    const challenge = getDailyChallenge("MOON", 1)!;
+    const answered = applyCommand(started, {
+      type: "ANSWER_DAILY_CHALLENGE",
+      day: 1,
+      choiceId: challenge.correctOptionId
+    });
+
+    expect(answered.challengeLives).toBe(5);
+    expect(isDailyChallengeComplete(answered)).toBe(true);
+    expect(answered.lastMessage).toContain("Day 1 challenge complete");
+  });
+
+  it("adds default challenge lives and progress to older saved missions", () => {
+    const legacy = mission();
+    Reflect.deleteProperty(legacy, "challengeLives");
+    Reflect.deleteProperty(legacy, "completedChallengeDays");
+    Reflect.deleteProperty(legacy, "challengeWrongChoices");
+
+    const normalized = ensureDailyChallengeProgress(legacy);
+    expect(normalized.challengeLives).toBe(5);
+    expect(normalized.completedChallengeDays).toEqual([]);
+    expect(normalized.challengeWrongChoices).toEqual({});
   });
 
   it("creates three source-linked objectives per day with different lunar and Mars schedules", () => {
@@ -127,6 +260,54 @@ describe("Launch Lab simulation", () => {
     expect(mars.objectives.find((objective) => objective.id === "day-1-oxygen-inspection")?.reference?.note).toContain("122 g");
     expect(lunar.objectives.find((objective) => objective.id === "day-3-rover-survey")?.reference?.url).toContain("lro/nasa-moon-camera");
     expect(mars.objectives.find((objective) => objective.id === "day-4-power-audit")?.reference?.note).toContain("425 to 275");
+  });
+
+  it("provides a distinct five-option NASA/CSA-grounded astronaut challenge for each mission day", () => {
+    for (const planet of ["MOON", "MARS"] as const) {
+      const daily = DAILY_CHALLENGES[planet];
+      expect(daily).toHaveLength(7);
+      expect(new Set(daily.map((challenge) => challenge.title)).size).toBe(7);
+      for (let day = 1; day <= 7; day += 1) {
+        const challenge = getDailyChallenge(planet, day);
+        expect(challenge?.day).toBe(day);
+        expect(challenge?.options).toHaveLength(5);
+        expect(new Set(challenge?.options.map((option) => option.id)).size).toBe(5);
+        expect(challenge?.options.filter((option) => option.id === challenge.correctOptionId)).toHaveLength(1);
+        expect(challenge?.reference.url).toMatch(/^https:\/\//);
+      }
+    }
+    expect(getDailyChallenge("MOON", 1)?.title).not.toBe(getDailyChallenge("MARS", 1)?.title);
+    expect(getDailyChallenge("MARS", 7)?.explanation).toContain("communication delay");
+  });
+
+  it("makes every planet-specific daily objective achievable through a 3D equipment action", () => {
+    for (const planet of ["MOON", "MARS"] as const) {
+      for (const [day, objectiveId, equipmentId, actionId] of DAILY_OBJECTIVE_ACTIONS[planet]) {
+        const base = createMission(`objective-${planet}-${day}-${objectiveId}`, { ...input, planet }, createdAt);
+        const prepared = {
+          ...base,
+          day,
+          elapsedMinutes: (day - 1) * 1440,
+          rngSeed: 0,
+          resources: {
+            ...base.resources,
+            batteryKwh: base.resources.batteryCapacityKwh,
+            wastewaterKg: 8,
+            quarantinedWaterKg: 8,
+            potableWaterKg: 200,
+            foodKg: 200,
+            spareParts: 4
+          },
+          systems: base.systems.map((system) => ({ ...system, status: "RUNNING" as const }))
+        };
+        const equipment = EQUIPMENT_CATALOG.find((item) => item.id === equipmentId);
+        expect(equipment?.position).toBeDefined();
+        expect(equipment?.actions.some((action) => action.id === actionId)).toBe(true);
+
+        const result = applyCommand(prepared, { type: "OPERATE", equipmentId, actionId });
+        expect(result.objectives.find((objective) => objective.id === objectiveId)?.complete).toBe(true);
+      }
+    }
   });
 
   it("completes planet-specific daily actions against the selected schedule", () => {
@@ -266,6 +447,7 @@ describe("Launch Lab simulation", () => {
     expect(waterAnswer).toContain(`${current.resources.potableWaterKg.toFixed(1)} kg potable`);
 
     expect(getEducationalHint(current, "Tell me about something else")).toContain("power, battery, oxygen");
+    expect(getEducationalHint(current, "challenge lives")).toContain("5 lives");
   });
 
   it("balances battery energy using power times one minute", () => {
@@ -302,13 +484,15 @@ describe("Launch Lab simulation", () => {
     expect(waterResult.lastMessage).toContain("potable-water reserves fell below");
   });
 
-  it("wins only when all objectives and emergency reserve thresholds are met by day 7", () => {
+  it("wins only when all objectives, daily challenges, lives, and emergency reserves are met by day 7", () => {
     const start = mission();
     const daySevenState = {
       ...start,
       elapsedMinutes: 7 * 1440 - 1,
       day: 7,
       objectives: start.objectives.map((objective) => ({ ...objective, complete: true })),
+      completedChallengeDays: [1, 2, 3, 4, 5, 6, 7],
+      challengeLives: 1,
       resources: {
         ...start.resources,
         oxygenKg: 85,
@@ -320,7 +504,7 @@ describe("Launch Lab simulation", () => {
     };
     const result = advanceMinutes(daySevenState, 1);
     expect(result.status).toBe("SUCCESS");
-    expect(result.lastMessage).toContain("NASA reference reserves");
+    expect(result.lastMessage).toContain("1 challenge life");
   });
 
   it("does not exceed the seven-day mission horizon", () => {
