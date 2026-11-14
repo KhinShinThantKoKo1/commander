@@ -56,6 +56,46 @@ describe("Launch Lab simulation", () => {
     expect(next.resources.co2Kg).toBeGreaterThan(start.resources.co2Kg);
   });
 
+  it("fails if oxygen or water falls below the NASA reference one-day emergency reserve", () => {
+    const base = mission();
+    const oxygenCritical = {
+      ...base,
+      resources: { ...base.resources, oxygenKg: base.crew.length * 0.90 * 0.5, potableWaterKg: base.crew.length * 4.48 * 2 }
+    };
+    const oxygenResult = advanceMinutes(oxygenCritical, 1);
+    expect(oxygenResult.status).toBe("FAILED");
+    expect(oxygenResult.lastMessage).toContain("Oxygen reserve fell below");
+
+    const waterCritical = {
+      ...base,
+      resources: { ...base.resources, oxygenKg: base.crew.length * 0.90 * 1.5, potableWaterKg: base.crew.length * 4.48 * 0.5 }
+    };
+    const waterResult = advanceMinutes(waterCritical, 1);
+    expect(waterResult.status).toBe("FAILED");
+    expect(waterResult.lastMessage).toContain("potable-water reserves fell below");
+  });
+
+  it("wins only when all objectives and emergency reserve thresholds are met by day 7", () => {
+    const start = mission();
+    const daySevenState = {
+      ...start,
+      elapsedMinutes: 7 * 1440 - 1,
+      day: 7,
+      objectives: start.objectives.map((objective) => ({ ...objective, complete: true })),
+      resources: {
+        ...start.resources,
+        oxygenKg: 85,
+        potableWaterKg: 180,
+        foodKg: 80,
+        oxygenPartialPressureKpa: 21,
+        co2PartialPressureKpa: 0.1
+      }
+    };
+    const result = advanceMinutes(daySevenState, 1);
+    expect(result.status).toBe("SUCCESS");
+    expect(result.lastMessage).toContain("NASA reference reserves");
+  });
+
   it("does not exceed the seven-day mission horizon", () => {
     const start = mission();
     const next = advanceMinutes(start, 10_080);

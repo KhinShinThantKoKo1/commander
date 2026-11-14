@@ -2,7 +2,7 @@
   "name": "spaceapp-launch-lab",
   "version": "1.0.0",
   "private": true,
-  "description": "Launch Lab \u2014 a deployable 3D astronaut survival training simulation",
+  "description": "Launch Lab — a deployable 3D astronaut survival training simulation",
   "engines": {
     "node": ">=20.9.0"
   },
@@ -32,5 +32,9 @@
     "@types/three": "^0.181.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "fsevents@2.3.3": true
   }
 }

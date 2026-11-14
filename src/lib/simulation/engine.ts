@@ -347,11 +347,15 @@ function tickOneMinute(original: MissionState): MissionState {
   };
 
   const failed = GAMEPLAY_ASSUMPTIONS.gameOnlyFailureBoundaries;
+  const crewReserveOxygenKg = state.crew.length * SCIENCE_REFERENCES.bvad.oxygenConsumptionKgPerCrewDay;
+  const crewReserveWaterKg = state.crew.length * SCIENCE_REFERENCES.bvad.earlyPlanetaryBaseWaterKgPerCrewDay;
+  const crewReserveFoodKg = Math.max(2, state.crew.length * GAMEPLAY_ASSUMPTIONS.foodUseKgPerCrewDay * 0.5);
   let failureReason = "";
-  if (state.resources.oxygenPartialPressureKpa < failed.oxygenPartialPressureKpa) failureReason = "The training scenario's oxygen partial-pressure boundary was crossed.";
+  if (state.resources.oxygenKg < crewReserveOxygenKg) failureReason = `Oxygen reserve fell below the NASA reference one-day emergency buffer for ${state.crew.length} crew (${crewReserveOxygenKg.toFixed(2)} kg).`;
+  else if (state.resources.potableWaterKg < crewReserveWaterKg) failureReason = `Verified potable-water reserves fell below the NASA reference one-day emergency buffer for ${state.crew.length} crew (${crewReserveWaterKg.toFixed(2)} kg).`;
+  else if (state.resources.foodKg < crewReserveFoodKg) failureReason = "Stored food fell below the emergency reserve required to sustain the crew through the next operating cycle.";
+  else if (state.resources.oxygenPartialPressureKpa < failed.oxygenPartialPressureKpa) failureReason = "The training scenario's oxygen partial-pressure boundary was crossed.";
   else if (state.resources.co2PartialPressureKpa > failed.co2PartialPressureKpa) failureReason = "The training scenario's CO₂ partial-pressure boundary was crossed.";
-  else if (state.resources.potableWaterKg < failed.potableWaterKg) failureReason = "Verified potable-water reserves fell below the training scenario boundary.";
-  else if (state.resources.foodKg < failed.foodKg) failureReason = "Stored food fell below the training scenario boundary.";
   else if (state.resources.batteryKwh < failed.batteryKwh && !runningIds.has("life-support")) failureReason = "Battery reserve is exhausted and the essential life-support load cannot run.";
   if (failureReason) {
     state = { ...state, status: "FAILED", lastMessage: failureReason, telemetry: [...state.telemetry, logEntry(state, "RESULT", "Mission ended", failureReason)] };
@@ -360,9 +364,9 @@ function tickOneMinute(original: MissionState): MissionState {
 
   if (state.elapsedMinutes >= 7 * MINUTES_PER_DAY) {
     const allObjectives = state.objectives.every((objective) => objective.complete);
-    const essentialsStable = state.resources.oxygenPartialPressureKpa >= failed.oxygenPartialPressureKpa && state.resources.co2PartialPressureKpa <= failed.co2PartialPressureKpa && state.resources.potableWaterKg >= failed.potableWaterKg && state.resources.foodKg >= failed.foodKg;
+    const essentialsStable = state.resources.oxygenKg >= crewReserveOxygenKg && state.resources.potableWaterKg >= crewReserveWaterKg && state.resources.foodKg >= crewReserveFoodKg && state.resources.oxygenPartialPressureKpa >= failed.oxygenPartialPressureKpa && state.resources.co2PartialPressureKpa <= failed.co2PartialPressureKpa;
     const status = allObjectives && essentialsStable ? "SUCCESS" : "FAILED";
-    const message = status === "SUCCESS" ? "Seven days completed and all training objectives were verified." : "Seven days completed, but one or more mission objectives or training survival boundaries were not met.";
+    const message = status === "SUCCESS" ? "Seven days completed and all training objectives were verified against the NASA reference reserves." : "Seven days completed, but one or more mission objectives or emergency reserve thresholds were not met.";
     state = { ...state, status, lastMessage: message, telemetry: [...state.telemetry, logEntry(state, "RESULT", status === "SUCCESS" ? "Mission complete" : "Mission incomplete", message)] };
   }
 
