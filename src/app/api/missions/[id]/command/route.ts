@@ -12,8 +12,8 @@ const isCommand = (value: unknown): value is MissionCommand => {
   if (command.type === "SET_SPEED") return command.speed === 0 || command.speed === 1 || command.speed === 3;
   if (command.type === "TOGGLE_SYSTEM") return typeof command.systemId === "string" && typeof command.enabled === "boolean";
   if (command.type === "DECIDE") return typeof command.incidentId === "string" && typeof command.choiceId === "string";
-  if (command.type === "INTERACT") return typeof command.equipmentId === "string";
-  if (command.type === "OPERATE") return typeof command.equipmentId === "string" && typeof command.actionId === "string";
+  if (command.type === "INTERACT") return typeof command.equipmentId === "string" && (command.crewId === undefined || typeof command.crewId === "string");
+  if (command.type === "OPERATE") return typeof command.equipmentId === "string" && typeof command.actionId === "string" && (command.crewId === undefined || typeof command.crewId === "string");
   return false;
 };
 

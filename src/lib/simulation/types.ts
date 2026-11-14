@@ -1,4 +1,5 @@
 export type Planet = "MOON" | "MARS";
+export type Difficulty = "STANDARD" | "CHALLENGING" | "EXPERT";
 export type MissionStatus = "ACTIVE" | "SUCCESS" | "FAILED";
 export type EquipmentStatus = "OFF" | "RUNNING" | "DEGRADED" | "FAULTED" | "MAINTENANCE";
 export type IncidentKind = "POWER_RESERVE" | "CO2_RISING" | "WATER_QUALITY" | "LIFE_SUPPORT_FAULT" | "SOLAR_CHANGE" | "MARS_DUST";
@@ -11,6 +12,7 @@ export interface CrewMember {
   fatigue: number;
   available: boolean;
   currentTask: string;
+  currentTaskEquipmentId?: string;
 }
 
 export interface EquipmentSystem {
@@ -73,6 +75,22 @@ export interface MissionIncident {
   sourceClass: "NASA_DESIGN_CONTEXT" | "GAMEPLAY_ASSUMPTION";
 }
 
+export interface SpaceWeatherChallenge {
+  event: {
+    id: string;
+    classType: string;
+    peakTime: string;
+    activeRegionNum: number | null;
+    url: string;
+  };
+  question: string;
+  options: Array<{ id: string; text: string }>;
+  correctOptionId: string;
+  explanation: string;
+  references: Array<{ label: string; url: string }>;
+  retrievedAt: string;
+}
+
 export interface MissionLogEntry {
   id: string;
   minute: number;
@@ -83,8 +101,14 @@ export interface MissionLogEntry {
 
 export interface MissionObjective {
   id: string;
+  day?: number;
   title: string;
   complete: boolean;
+  reference?: {
+    title: string;
+    url: string;
+    note: string;
+  };
 }
 
 export interface MissionState {
@@ -92,6 +116,7 @@ export interface MissionState {
   version: 1;
   scienceDataVersion: string;
   planet: Planet;
+  difficulty: Difficulty;
   missionName: string;
   playerName: string;
   playerCharacterId: string;
@@ -118,11 +143,12 @@ export type MissionCommand =
   | { type: "SET_SPEED"; speed: 0 | 1 | 3 }
   | { type: "TOGGLE_SYSTEM"; systemId: string; enabled: boolean }
   | { type: "DECIDE"; incidentId: string; choiceId: string }
-  | { type: "INTERACT"; equipmentId: string }
-  | { type: "OPERATE"; equipmentId: string; actionId: string };
+  | { type: "INTERACT"; equipmentId: string; crewId?: string }
+  | { type: "OPERATE"; equipmentId: string; actionId: string; crewId?: string };
 
 export interface CreateMissionInput {
   planet: Planet;
+  difficulty?: Difficulty;
   playerName: string;
   playerCharacterId: string;
   supportCrewIds: string[];

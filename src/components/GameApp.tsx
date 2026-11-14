@@ -1,15 +1,20 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CHARACTER_ROSTER, getEducationalHint, TRAINING_ASSUMPTIONS } from "@/lib/simulation/engine";
+import { FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { areDailyObjectivesComplete, CHARACTER_ROSTER, getEducationalHint, TRAINING_ASSUMPTIONS } from "@/lib/simulation/engine";
 import { EQUIPMENT_CATALOG } from "@/lib/simulation/equipment";
-import { SCIENCE_REFERENCES, SCIENCE_DATA_VERSION } from "@/lib/simulation/science";
-import type { CreateMissionInput, MissionCommand, MissionState, Planet } from "@/lib/simulation/types";
+import { GAMEPLAY_ASSUMPTIONS, SCIENCE_REFERENCES, SCIENCE_DATA_VERSION } from "@/lib/simulation/science";
+import type { CreateMissionInput, Difficulty, MissionCommand, MissionState, Planet, SpaceWeatherChallenge } from "@/lib/simulation/types";
 
 const WorldCanvas = dynamic(() => import("@/components/WorldCanvas"), { ssr: false, loading: () => <div className="world-loading">BUILDING THE OUTPOST…</div> });
 
+const MINUTES_PER_DAY = 1440;
+const SIMULATION_MINUTES_PER_REAL_SECOND = 5;
 type CharacterInfo = { id: string; name: string; role: string; image: string; accent: string; custom?: boolean; opaque?: boolean };
+type MiraPosition = { left: number; top: number };
+type MiraDrag = { pointerId: number; offsetX: number; offsetY: number; startX: number; startY: number; isLauncher: boolean; didMove: boolean };
+const DIFFICULTIES: Difficulty[] = ["STANDARD", "CHALLENGING", "EXPERT"];
 const CHARACTERS: CharacterInfo[] = [
   { id: "sofia", name: "Sofia", role: "Commander", image: "/assets/characters/sofia.png", accent: "#d9a52f" },
   { id: "pilot", name: "Pilot Andrews", role: "Pilot", image: "/assets/characters/pilot-andrews.png", accent: "#7845aa" },
@@ -22,32 +27,61 @@ const CHARACTERS: CharacterInfo[] = [
 ];
 
 function fmt(value: number, digits = 1) { return Number.isFinite(value) ? value.toFixed(digits) : "—"; }
-function timeLabel(minutes: number) {
-  const day = Math.floor(minutes / 1440) + 1;
-  const inDay = minutes % 1440;
-  return `DAY ${day} · ${String(Math.floor(inDay / 60)).padStart(2, "0")}:${String(inDay % 60).padStart(2, "0")}`;
+function timeLabel(minutes: number, missionDay: number, status: MissionState["status"]) {
+  if (minutes >= 7 * MINUTES_PER_DAY) return `DAY ${missionDay} · ${status === "SUCCESS" ? "COMPLETE" : "ENDED"}`;
+  const inDay = minutes % MINUTES_PER_DAY;
+  return `DAY ${missionDay} · ${String(Math.floor(inDay / 60)).padStart(2, "0")}:${String(inDay % 60).padStart(2, "0")}`;
+}
+function logTimeLabel(minutes: number) {
+  const day = Math.floor(minutes / MINUTES_PER_DAY) + 1;
+  const inDay = minutes % MINUTES_PER_DAY;
+  return `Day ${day} · ${String(Math.floor(inDay / 60)).padStart(2, "0")}:${String(inDay % 60).padStart(2, "0")}`;
 }
 
 export default function GameApp() {
   const [selectedCharacter, setSelectedCharacter] = useState("user-magenta");
   const [playerName, setPlayerName] = useState("Cadet");
   const [planet, setPlanet] = useState<Planet>("MOON");
+  const [difficulty, setDifficulty] = useState<Difficulty>("STANDARD");
   const [supportCrew, setSupportCrew] = useState<string[]>(["sofia", "christopher", "jewel"]);
   const [mission, setMission] = useState<MissionState | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [selectedEquipmentId, setSelectedEquipmentId] = useState<string | null>(null);
+  const [selectedCrewId, setSelectedCrewId] = useState<string | null>(null);
   const [miraOpen, setMiraOpen] = useState(false);
+  const [miraWidgetOpen, setMiraWidgetOpen] = useState(false);
+  const [miraPosition, setMiraPosition] = useState<MiraPosition | null>(null);
   const [miraQuestion, setMiraQuestion] = useState("");
   const [miraReply, setMiraReply] = useState("Hi! I'm MIRA. I can help you think through the equipment and resource clues without choosing for you.");
   const [playerPosition, setPlayerPosition] = useState<[number, number]>([0, 1.5]);
   const [showScience, setShowScience] = useState(false);
   const [restoring, setRestoring] = useState(true);
+  const [spaceWeatherChallenge, setSpaceWeatherChallenge] = useState<SpaceWeatherChallenge | null>(null);
+  const [spaceWeatherAnswer, setSpaceWeatherAnswer] = useState<string | null>(null);
+  const [spaceWeatherLoading, setSpaceWeatherLoading] = useState(false);
+  const [spaceWeatherError, setSpaceWeatherError] = useState("");
   const busyRef = useRef(false);
   const missionRef = useRef<MissionState | null>(null);
+  const miraDragRef = useRef<MiraDrag | null>(null);
+  const suppressMiraClickRef = useRef(false);
   const commandRef = useRef<(command: MissionCommand) => Promise<void>>(async () => undefined);
 
   useEffect(() => { missionRef.current = mission; }, [mission]);
+
+  useEffect(() => {
+    if (!miraPosition) return;
+    const clampMiraToViewport = () => {
+      const target = document.querySelector<HTMLElement>(miraWidgetOpen ? ".mira-widget" : ".mira-launcher");
+      if (!target) return;
+      const left = Math.max(8, Math.min(miraPosition.left, window.innerWidth - target.offsetWidth - 8));
+      const top = Math.max(8, Math.min(miraPosition.top, window.innerHeight - target.offsetHeight - 8));
+      if (left !== miraPosition.left || top !== miraPosition.top) setMiraPosition({ left, top });
+    };
+    clampMiraToViewport();
+    window.addEventListener("resize", clampMiraToViewport);
+    return () => window.removeEventListener("resize", clampMiraToViewport);
+  }, [miraPosition, miraWidgetOpen, mission?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,6 +111,38 @@ export default function GameApp() {
 
   const equipment = useMemo(() => EQUIPMENT_CATALOG.find((item) => item.id === selectedEquipmentId) ?? null, [selectedEquipmentId]);
   const selectedSystem = equipment?.systemId ? mission?.systems.find((item) => item.id === equipment.systemId) : null;
+  const playerCharacter = CHARACTERS.find((item) => item.id === mission?.playerCharacterId) ?? CHARACTERS[6];
+  const selectedOperator = selectedCrewId
+    ? mission?.crew.find((member) => member.id === selectedCrewId)
+    : mission?.crew[0];
+  const supportCrewVisuals = mission?.crew.slice(1).map((member) => {
+    const character = CHARACTERS.find((item) => item.id === member.characterId);
+    return {
+      member,
+      accentColor: character?.accent ?? "#758ca0",
+      characterImage: character?.image ?? ""
+    };
+  }) ?? [];
+
+  const loadSpaceWeatherChallenge = useCallback(async () => {
+    setSpaceWeatherLoading(true);
+    setSpaceWeatherError("");
+    try {
+      const response = await fetch("/api/challenges/space-weather");
+      const payload = await response.json() as { challenge?: SpaceWeatherChallenge; error?: string };
+      if (!response.ok || !payload.challenge) throw new Error(payload.error ?? "Could not load a NASA space-weather challenge.");
+      setSpaceWeatherChallenge(payload.challenge);
+      setSpaceWeatherAnswer(null);
+    } catch (err) {
+      setSpaceWeatherError(err instanceof Error ? err.message : "Could not load NASA space-weather data.");
+    } finally {
+      setSpaceWeatherLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mission) void loadSpaceWeatherChallenge();
+  }, [mission?.id, loadSpaceWeatherChallenge]);
 
   const dispatch = useCallback(async (command: MissionCommand) => {
     const current = missionRef.current;
@@ -108,7 +174,8 @@ export default function GameApp() {
     const timer = window.setInterval(() => {
       const current = missionRef.current;
       if (!current || current.status !== "ACTIVE" || current.speed === 0 || current.activeIncident) return;
-      void commandRef.current({ type: "ADVANCE", minutes: current.speed });
+      if (current.elapsedMinutes >= current.day * MINUTES_PER_DAY - 1 && !areDailyObjectivesComplete(current)) return;
+      void commandRef.current({ type: "ADVANCE", minutes: current.speed * SIMULATION_MINUTES_PER_REAL_SECOND });
     }, 1000);
     return () => window.clearInterval(timer);
   }, [mission?.id, mission?.speed, mission?.activeIncident?.id, mission?.status]);
@@ -117,7 +184,7 @@ export default function GameApp() {
     setBusy(true);
     setError("");
     try {
-      const payload: CreateMissionInput = { planet, playerName, playerCharacterId: selectedCharacter, supportCrewIds: supportCrew.filter((id) => id !== selectedCharacter).slice(0, 3) };
+      const payload: CreateMissionInput = { planet, difficulty, playerName, playerCharacterId: selectedCharacter, supportCrewIds: supportCrew.filter((id) => id !== selectedCharacter).slice(0, 3) };
       const response = await fetch("/api/missions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       const data = await response.json() as { mission?: MissionState; error?: string };
       if (!response.ok || !data.mission) throw new Error(data.error ?? "Mission launch failed.");
@@ -149,15 +216,96 @@ export default function GameApp() {
 
   function selectEquipment(id: string) {
     setSelectedEquipmentId(id);
-    void dispatch({ type: "INTERACT", equipmentId: id });
+    void dispatch({ type: "INTERACT", equipmentId: id, crewId: selectedCrewId ?? undefined });
+  }
+
+  function answerMira(question: string) {
+    if (!mission) return;
+    setMiraReply(getEducationalHint(mission, question));
+    setMiraOpen(true);
+    setMiraQuestion("");
   }
 
   function askMira(event: FormEvent) {
     event.preventDefault();
-    if (!mission) return;
-    const question = miraQuestion.trim();
-    setMiraReply(getEducationalHint(mission, question || "hint"));
-    setMiraQuestion("");
+    answerMira(miraQuestion.trim());
+  }
+
+  function startMiraDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) return;
+    const target = event.currentTarget.closest<HTMLElement>(".mira-widget, .mira-launcher");
+    if (!target) return;
+    const rect = target.getBoundingClientRect();
+    setMiraPosition({ left: rect.left, top: rect.top });
+    miraDragRef.current = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      startX: event.clientX,
+      startY: event.clientY,
+      isLauncher: Boolean(event.currentTarget.closest(".mira-launcher")),
+      didMove: false
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function dragMira(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = miraDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const target = event.currentTarget.closest<HTMLElement>(".mira-widget, .mira-launcher");
+    const width = target?.offsetWidth ?? 350;
+    const height = target?.offsetHeight ?? 360;
+    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 5) drag.didMove = true;
+    setMiraPosition({
+      left: Math.max(8, Math.min(window.innerWidth - width - 8, event.clientX - drag.offsetX)),
+      top: Math.max(8, Math.min(window.innerHeight - height - 8, event.clientY - drag.offsetY))
+    });
+  }
+
+  function stopMiraDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = miraDragRef.current;
+    if (drag?.pointerId !== event.pointerId) return;
+    miraDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (drag.isLauncher && drag.didMove) {
+      suppressMiraClickRef.current = true;
+      window.requestAnimationFrame(() => { suppressMiraClickRef.current = false; });
+    }
+  }
+
+  function moveMiraWithKeyboard(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    const movement = {
+      ArrowLeft: [-32, 0],
+      ArrowRight: [32, 0],
+      ArrowUp: [0, -32],
+      ArrowDown: [0, 32]
+    }[event.key];
+    if (!movement) return;
+    event.preventDefault();
+    const target = event.currentTarget.closest<HTMLElement>(".mira-widget, .mira-launcher");
+    const rect = target?.getBoundingClientRect();
+    const width = target?.offsetWidth ?? 350;
+    const height = target?.offsetHeight ?? 360;
+    const current = miraPosition ?? { left: rect?.left ?? 8, top: rect?.top ?? 8 };
+    setMiraPosition({
+      left: Math.max(8, Math.min(window.innerWidth - width - 8, current.left + movement[0])),
+      top: Math.max(8, Math.min(window.innerHeight - height - 8, current.top + movement[1]))
+    });
+  }
+
+  function openMira(event: ReactMouseEvent<HTMLButtonElement>) {
+    if (suppressMiraClickRef.current) {
+      suppressMiraClickRef.current = false;
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const width = Math.min(360, window.innerWidth - 16);
+    const height = Math.min(miraOpen ? 410 : 290, window.innerHeight - 16);
+    setMiraPosition({
+      left: Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width)),
+      top: Math.max(8, Math.min(window.innerHeight - height - 8, rect.bottom - height))
+    });
+    setMiraWidgetOpen(true);
   }
 
   const onPlanet = planet === "MOON" ? "LUNAR SOUTH POLE TRAINING SITE" : "MARS SURFACE TRAINING SITE";
@@ -215,6 +363,15 @@ export default function GameApp() {
                 <strong>MARS</strong><small>Thin CO₂ atmosphere · Dust · Delayed communications</small><span className="planet-select">{planet === "MARS" ? "SELECTED" : "SELECT DESTINATION"}</span>
               </button>
             </div>
+            <div className="section-heading difficulty-heading"><span className="step-index">04</span><div><h2>Choose mission difficulty</h2><p>Harder settings change gameplay assumptions, not NASA reference values.</p></div></div>
+            <div className="difficulty-grid">
+              {DIFFICULTIES.map((level) => {
+                const profile = GAMEPLAY_ASSUMPTIONS.difficulties[level];
+                return <button type="button" key={level} aria-pressed={difficulty === level} className={`difficulty-card ${difficulty === level ? "chosen" : ""}`} onClick={() => setDifficulty(level)}>
+                  <strong>{profile.label}</strong><small>{profile.description}</small><span>{profile.batteryKwh} kWh battery · {profile.spareParts} spare parts</span><em>{difficulty === level ? "SELECTED" : "SELECT DIFFICULTY"}</em>
+                </button>;
+              })}
+            </div>
             <div className="scope-grid">
               <div><span>SCOPE</span><strong>7-day survival training</strong><small>Life support, power, water, food and mission operations.</small></div>
               <div><span>LOCATION</span><strong>{onPlanet}</strong><small>Simulated site; not a surveyed landing coordinate.</small></div>
@@ -225,7 +382,7 @@ export default function GameApp() {
             <p className="form-note">A saved mission is created on the server. Use the Docker deployment for persistent PostgreSQL saves.</p>
           </div>
           <aside className="setup-aside">
-            <div className="aside-card"><span className="eyebrow">THE MISSION</span><div className="aside-big-number">07<span>DAYS</span></div><p>Keep your four-person crew safe while completing three base-operation objectives.</p><div className="aside-divider" /><div className="aside-check"><span>01</span> Inspect life support</div><div className="aside-check"><span>02</span> Verify potable water</div><div className="aside-check"><span>03</span> Inspect the rover</div></div>
+            <div className="aside-card"><span className="eyebrow">THE MISSION</span><div className="aside-big-number">07<span>DAYS</span></div><p>Keep your four-person crew safe and complete three different objectives every day.</p><div className="aside-divider" /><div className="aside-check"><span>01</span> 3 objectives each day</div><div className="aside-check"><span>02</span> Different Moon and Mars agendas</div><div className="aside-check"><span>03</span> Complete all 21 to win</div></div>
             <div className="aside-note"><span>✦</span><div><strong>Learn by doing</strong><p>MIRA gives hints, not answers. Your choices change the simulation state.</p></div></div>
             <button type="button" className="science-toggle" onClick={() => setShowScience(!showScience)}>{showScience ? "Hide" : "View"} science references ↗</button>
             {showScience && <div className="science-small"><a href={SCIENCE_REFERENCES.bvad.url} target="_blank" rel="noreferrer">NASA BVAD Rev. 2</a><a href={SCIENCE_REFERENCES.eclss.url} target="_blank" rel="noreferrer">NASA ECLSS</a><a href="https://trek.nasa.gov/moon/" target="_blank" rel="noreferrer">NASA Moon Trek</a></div>}
@@ -236,13 +393,52 @@ export default function GameApp() {
     );
   }
 
+  const minutesUntilNextDay = mission.day < 7 ? Math.max(0, mission.day * MINUTES_PER_DAY - mission.elapsedMinutes) : 0;
+  const completedDailyObjectives = mission.objectives.filter((objective) => (objective.day ?? 1) === mission.day && objective.complete).length;
+  const dailyObjectivesComplete = areDailyObjectivesComplete(mission);
+  const elapsedToday = Math.min(MINUTES_PER_DAY, Math.max(0, mission.elapsedMinutes - (mission.day - 1) * MINUTES_PER_DAY));
+  const dayProgress = mission.status === "SUCCESS" ? 100 : (elapsedToday / 1440) * 100;
+  const hoursUntilNextDay = Math.floor(minutesUntilNextDay / 60);
+  const remainderMinutes = minutesUntilNextDay % 60;
+  const correctSpaceWeatherOption = spaceWeatherChallenge?.options.find((option) => option.id === spaceWeatherChallenge.correctOptionId);
+  const spaceWeatherAnswerIsCorrect = spaceWeatherAnswer !== null && spaceWeatherAnswer === spaceWeatherChallenge?.correctOptionId;
+  const miraPositionStyle = miraPosition
+    ? { left: miraPosition.left, top: miraPosition.top, right: "auto" as const, bottom: "auto" as const }
+    : undefined;
+
   return (
     <main className="game-shell">
       <header className="game-header">
         <div className="game-brand"><img src="/assets/launch-lab-logo.png" alt="Launch Lab" /><span>OUTPOST OPERATIONS</span></div>
-        <div className="mission-clock"><span className="pulse-dot" />{timeLabel(mission.elapsedMinutes)}<small>{mission.planet === "MOON" ? "LUNAR BASE" : "MARS BASE"}</small></div>
-        <div className="header-controls"><button type="button" onClick={() => void dispatch({ type: "SET_SPEED", speed: 0 })} className={mission.speed === 0 ? "speed-active" : ""}>Ⅱ PAUSE</button><button type="button" onClick={() => void dispatch({ type: "SET_SPEED", speed: 1 })} className={mission.speed === 1 ? "speed-active" : ""}>1×</button><button type="button" onClick={() => void dispatch({ type: "SET_SPEED", speed: 3 })} className={mission.speed === 3 ? "speed-active" : ""}>3×</button><button type="button" className="exit-button" onClick={() => { setMission(null); missionRef.current = null; }}>EXIT</button></div>
+        <div className="mission-clock"><span className="pulse-dot" />{timeLabel(mission.elapsedMinutes, mission.day, mission.status)}<small>{mission.planet === "MOON" ? "LUNAR BASE" : "MARS BASE"} · {GAMEPLAY_ASSUMPTIONS.difficulties[mission.difficulty ?? "STANDARD"].label.toUpperCase()}</small></div>
+        <div className="header-controls">
+          <button type="button" aria-label="Pause simulation" aria-pressed={mission.speed === 0} onClick={() => void dispatch({ type: "SET_SPEED", speed: 0 })} className={mission.speed === 0 ? "speed-active" : ""}>Ⅱ Pause</button>
+          <button type="button" aria-label="Set simulation speed to normal" aria-pressed={mission.speed === 1} onClick={() => void dispatch({ type: "SET_SPEED", speed: 1 })} className={mission.speed === 1 ? "speed-active" : ""}>1× Normal</button>
+          <button type="button" aria-label="Set simulation speed to fast" aria-pressed={mission.speed === 3} onClick={() => void dispatch({ type: "SET_SPEED", speed: 3 })} className={mission.speed === 3 ? "speed-active" : ""}>3× Fast</button>
+          <button type="button" className="exit-button" onClick={() => { setMission(null); missionRef.current = null; setSelectedCrewId(null); }}>Exit mission</button>
+        </div>
       </header>
+      <section className="day-progress-panel" aria-label="Mission day progress">
+        <div className="day-progress-copy">
+          <strong>DAY {mission.day} OF 7</strong>
+          <span>{mission.day < 7 ? dailyObjectivesComplete ? `${hoursUntilNextDay}h ${String(remainderMinutes).padStart(2, "0")}m of simulation until Day ${mission.day + 1}` : `Daily objectives: ${completedDailyObjectives}/3 complete` : `Final mission day · ${completedDailyObjectives}/3 objectives complete`}</span>
+        </div>
+        <div className="day-progress-track" role="progressbar" aria-label={`Day ${mission.day} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(dayProgress)}>
+          <div className="day-progress-fill" style={{ width: `${dayProgress}%` }} />
+        </div>
+        <p>Days advance automatically only after all three daily objectives are complete. Unfinished objectives pause the simulation at day’s end. A day takes about 5 minutes at Normal speed or 1 minute 36 seconds at Fast speed.</p>
+        {mission.day < 7 && <button
+          type="button"
+          className="day-advance-button"
+          disabled={mission.status !== "ACTIVE" || Boolean(mission.activeIncident) || !dailyObjectivesComplete}
+          title={mission.activeIncident ? "Resolve the current alert before advancing." : !dailyObjectivesComplete ? `Complete all three objectives for Day ${mission.day} before advancing (${completedDailyObjectives}/3 complete).` : "Simulate the remaining time until the next day; the simulation will stop if an alert needs your decision."}
+          aria-label={`Advance simulation to Day ${mission.day + 1}`}
+          onClick={() => void dispatch({ type: "ADVANCE", minutes: minutesUntilNextDay })}
+        >
+          {mission.activeIncident ? "Resolve alert first" : dailyObjectivesComplete ? `Advance to Day ${mission.day + 1}` : "Complete today's objectives"}
+        </button>}
+        {mission.day === 7 && <span className="day-final-note">{dailyObjectivesComplete ? "All daily objectives complete. Continue simulation to finish the campaign." : `Complete today's objectives (${completedDailyObjectives}/3) to finish the campaign.`}</span>}
+      </section>
       <section className="telemetry-strip">
         <Metric label="POWER" icon="⚡" value={`${fmt(mission.resources.solarGenerationKw)} kW`} detail={`${fmt(mission.resources.electricalDemandKw)} kW demand`} warn={mission.resources.powerUnmetKw > 0.01} />
         <Metric label="BATTERY" icon="🔋" value={`${fmt(mission.resources.batteryKwh)} kWh`} detail={`${fmt(mission.resources.batteryKwh / mission.resources.batteryCapacityKwh * 100, 0)}% of ${mission.resources.batteryCapacityKwh} kWh`} warn={mission.resources.batteryKwh < TRAINING_ASSUMPTIONS.warningBatteryKwh} />
@@ -254,37 +450,149 @@ export default function GameApp() {
       </section>
       {error && <div className="game-error">{error}</div>}
       {mission.activeIncident && <section className="incident-banner"><div className="incident-icon">!</div><div><span>{mission.activeIncident.severity} ALERT · {mission.activeIncident.kind.replaceAll("_", " ")}</span><strong>{mission.activeIncident.title}</strong><p>{mission.activeIncident.description}</p></div><span className="incident-paused">SIM PAUSED FOR DECISION</span></section>}
-      {mission.status !== "ACTIVE" && <section className={`mission-end ${mission.status.toLowerCase()}`}><div className="end-symbol">{mission.status === "SUCCESS" ? "✦" : "!"}</div><div><span>MISSION {mission.status === "SUCCESS" ? "COMPLETE" : "ENDED"}</span><strong>{mission.lastMessage}</strong><p>Review the operational log to see how your decisions affected the crew and equipment.</p></div><button type="button" onClick={() => { setMission(null); missionRef.current = null; }}>NEW MISSION</button></section>}
+      {mission.status !== "ACTIVE" && <section className={`mission-end ${mission.status.toLowerCase()}`}><div className="end-symbol">{mission.status === "SUCCESS" ? "✦" : "!"}</div><div><span>MISSION {mission.status === "SUCCESS" ? "COMPLETE" : "ENDED"}</span><strong>{mission.lastMessage}</strong><p>Review the operational log to see how your decisions affected the crew and equipment.</p></div><button type="button" onClick={() => { setMission(null); missionRef.current = null; setSelectedCrewId(null); }}>NEW MISSION</button></section>}
       <section className="game-layout">
         <aside className="game-sidebar left-sidebar">
-          <div className="sidebar-section"><div className="sidebar-title">CREW <span>04 / 04</span></div>{mission.crew.map((member) => {
+          <div className="sidebar-section">
+            <div className="sidebar-title">CREW <span>04 / 04</span></div>
+            <p className="crew-assignment-hint">Crew roam while idle. Select Assign or click an astronaut, then choose equipment and an action to send them to work.</p>
+            {mission.crew.map((member, index) => {
             const character = CHARACTERS.find((item) => item.id === member.characterId);
-            return <div className="crew-member" key={member.id}><span className="crew-avatar" style={{ borderColor: character?.accent ?? "#758ca0" }}>{character ? <img src={character.image} alt="" className={character.opaque ? "opaque-image" : ""} /> : "👩‍🚀"}</span><span><strong>{member.name}</strong><small>{member.role}</small><small className="crew-task">{member.currentTask}</small></span><i className={member.fatigue > 65 ? "fatigue-high" : ""} title={`Game fatigue indicator ${Math.round(member.fatigue)}%`}>{Math.round(member.fatigue)}%</i></div>;
-          })}</div>
-          <div className="sidebar-section"><div className="sidebar-title">MISSION OBJECTIVES</div>{mission.objectives.map((objective) => <div className={`objective-row ${objective.complete ? "complete" : ""}`} key={objective.id}><span>{objective.complete ? "✓" : "○"}</span>{objective.title}</div>)}</div>
+            const selected = member.id === selectedCrewId;
+            return <div className={`crew-member ${selected ? "selected" : ""}`} key={member.id}>
+              <span className="crew-avatar" style={{ borderColor: character?.accent ?? "#758ca0" }}>{character ? <img src={character.image} alt="" className={character.opaque ? "opaque-image" : ""} /> : "👩‍🚀"}</span>
+              <span><strong>{member.name}</strong><small>{member.role}</small><small className="crew-task">{member.currentTask}</small></span>
+              {index > 0
+                ? <button type="button" className="crew-assign-button" aria-pressed={selected} onClick={() => setSelectedCrewId(selected ? null : member.id)}>{selected ? "SELECTED" : "ASSIGN"}</button>
+                : <span className="crew-role-tag">YOU</span>}
+              <i className={member.fatigue > 65 ? "fatigue-high" : ""} title={`Game fatigue indicator ${Math.round(member.fatigue)}%`}>{Math.round(member.fatigue)}%</i>
+            </div>;
+          })}
+          </div>
+          <div className="sidebar-section">
+            <div className="sidebar-title">DAILY OBJECTIVES <span>{mission.objectives.filter((objective) => objective.complete).length}/{mission.objectives.length}</span></div>
+            <p className="objective-hint">Complete each day’s three tasks. Open a day to see its checklist; unfinished past tasks remain available.</p>
+            {Array.from({ length: 7 }, (_, index) => index + 1).map((objectiveDay) => {
+              const dailyObjectives = mission.objectives.filter((objective) => (objective.day ?? 1) === objectiveDay);
+              const completedToday = dailyObjectives.filter((objective) => objective.complete).length;
+              return <details className={`objective-day ${mission.day === objectiveDay ? "today" : ""}`} key={objectiveDay} open={mission.day === objectiveDay}>
+                <summary><span>DAY {objectiveDay}{mission.day === objectiveDay ? " · TODAY" : ""}</span><b>{completedToday}/3</b></summary>
+                <div className="objective-day-list">{dailyObjectives.map((objective) => {
+                  const status = objective.complete ? "DONE" : objectiveDay === mission.day ? "TODAY" : objectiveDay < mission.day ? "OPEN" : "UP NEXT";
+                  return <div className={`objective-row ${objective.complete ? "complete" : ""} ${objectiveDay === mission.day && !objective.complete ? "current" : ""}`} key={objective.id}>
+                    <span aria-hidden="true">{objective.complete ? "✓" : objectiveDay < mission.day ? "!" : "○"}</span>
+                    <div className="objective-copy">
+                      <small>{status}</small>
+                      <strong>{objective.title}</strong>
+                      {objective.reference && <div className="objective-reference">
+                        <a href={objective.reference.url} target="_blank" rel="noreferrer">{objective.reference.title} ↗</a>
+                        <small>{objective.reference.note}</small>
+                      </div>}
+                    </div>
+                  </div>;
+                })}</div>
+              </details>;
+            })}
+          </div>
           <div className="sidebar-section compact-note"><div className="sidebar-title">MISSION MODEL</div><p>{mission.planet === "MOON" ? "South Pole training profile · local illumination is simplified and not linked to a live Moon Trek ephemeris." : "Mars training profile · dust and solar factors are scenario assumptions, not live weather."}</p></div>
         </aside>
         <section className="world-column">
-          <div className="world-topline"><span><i /> LIVE 3D OUTPOST</span><span>{mission.planet === "MOON" ? "LUNAR REGOLITH" : "MARTIAN TERRAIN"} · CLICK-TO-WALK</span></div>
-          <WorldCanvas planet={mission.planet} mission={mission} accentColor={(CHARACTERS.find((item) => item.id === mission.playerCharacterId) ?? CHARACTERS[6]).accent} selectedEquipmentId={selectedEquipmentId} onSelectEquipment={selectEquipment} onMove={(x, z) => setPlayerPosition([x, z])} />
-          <div className="world-bottomline"><span>POSITION {fmt(playerPosition[0], 1)}, {fmt(playerPosition[1], 1)}</span><span>RENDER FPS DOES NOT DRIVE SCIENCE CALCULATIONS</span></div>
+          <div className="world-topline"><span><i /> LIVE 3D OUTPOST</span><span>DAY {mission.day} ENVIRONMENT · {mission.planet === "MOON" ? "LUNAR REGOLITH" : "MARTIAN TERRAIN"} · CLICK-TO-WALK</span></div>
+          <WorldCanvas planet={mission.planet} mission={mission} accentColor={playerCharacter.accent} characterImage={playerCharacter.image} characterName={playerCharacter.name} supportCrew={supportCrewVisuals} selectedCrewId={selectedCrewId} onSelectCrew={setSelectedCrewId} selectedEquipmentId={selectedEquipmentId} onSelectEquipment={selectEquipment} onMove={(x, z) => setPlayerPosition([x, z])} />
+          <div className="world-bottomline"><span>POSITION {fmt(playerPosition[0], 1)}, {fmt(playerPosition[1], 1)}</span><span>RENDER FPS DOES NOT DRIVE SCIENCE CALCULATIONS</span><a className="log-jump" href="#activity-log">INSPECTION FEEDBACK ↓</a></div>
           {equipment && <div className="equipment-panel">
             <button className="close-equipment" onClick={() => setSelectedEquipmentId(null)}>×</button>
             <div className="equipment-panel-head"><span className="equipment-icon">{equipment.icon}</span><div><span>{equipment.room}</span><strong>{equipment.name}</strong></div></div>
             <p>{equipment.description}</p>
+            <div className="crew-operator-line" role="status"><span>OPERATOR</span><strong>{selectedOperator?.name ?? mission.playerName} · {selectedOperator?.role ?? "Commander"}</strong>{selectedCrewId && <button type="button" onClick={() => setSelectedCrewId(null)}>USE COMMANDER</button>}</div>
             {selectedSystem && <div className="equipment-state"><span>STATE <b className={`state-${selectedSystem.status.toLowerCase()}`}>{selectedSystem.status}</b></span><span>POWER <b>{fmt(selectedSystem.powerKw)} kW</b></span><span>CONDITION <b>{selectedSystem.condition}%</b></span></div>}
-            <div className="equipment-actions">{equipment.actions.map((action) => <button type="button" key={action.id} disabled={busy || mission.status !== "ACTIVE"} onClick={() => void dispatch({ type: "OPERATE", equipmentId: equipment.id, actionId: action.id })}><strong>{action.label}</strong><small>{action.durationMinutes} min · {action.requirements.join(" · ")}</small></button>)}</div>
+            <p className="equipment-feedback" role="status" aria-live="polite">{mission.lastMessage}</p>
+            <div className="equipment-actions">{equipment.actions.map((action) => <button type="button" key={action.id} disabled={busy || mission.status !== "ACTIVE"} aria-label={`${action.label}, takes ${action.durationMinutes} simulated minutes`} onClick={() => void dispatch({ type: "OPERATE", equipmentId: equipment.id, actionId: action.id, crewId: selectedCrewId ?? undefined })}>
+              <strong>{action.label}{busy ? " · Working…" : ""}</strong>
+              <small>{action.durationMinutes === 0 ? "No simulated time" : `Takes ${action.durationMinutes} simulated minutes`}</small>
+              <small>Needed: {action.requirements.join(" · ")}</small>
+              <small className="action-caution">May be blocked: {action.failureConditions.join(" ")}</small>
+            </button>)}</div>
             <span className="equipment-model-note">Actions consume simulated time and may use resources. Requirements and failure conditions are defined in the equipment registry.</span>
           </div>}
         </section>
         <aside className="game-sidebar right-sidebar">
-          {mission.activeIncident ? <div className="decision-card"><div className="sidebar-title">CHOOSE YOUR RESPONSE <span>05 OPTIONS</span></div><p className="decision-intro">Read the evidence. Consider the system dependencies before committing the crew.</p>{mission.activeIncident.evidence.map((line) => <div className="evidence-row" key={line}><span>↳</span>{line}</div>)}<div className="choice-list">{mission.activeIncident.choices.map((choice, index) => <button type="button" key={choice.id} disabled={busy || (choice.cost.spareParts ?? 0) > mission.resources.spareParts} onClick={() => void dispatch({ type: "DECIDE", incidentId: mission.activeIncident!.id, choiceId: choice.id })}><span>{index + 1}</span><div><strong>{choice.title}</strong><small>{choice.detail}</small><em>{choice.cost.minutes ?? 1} min{choice.cost.batteryKwh ? ` · ${choice.cost.batteryKwh} kWh` : ""}{choice.cost.spareParts ? ` · ${choice.cost.spareParts} spare part` : ""}</em></div></button>)}</div><small className="training-tag">SCENARIO RESPONSE · NOT A REAL FLIGHT PROCEDURE</small></div> : <div className="mira-card"><div className="mira-heading"><span className="mira-orb">M</span><div><strong>MIRA</strong><small>ONBOARD TRAINING ASSISTANT</small></div><span className="mira-online">●</span></div><p>{miraReply}</p><button className="mira-hint" onClick={() => { setMiraReply(getEducationalHint(mission)); setMiraOpen(true); }}>GIVE ME A HINT ↗</button><button className="mira-text-toggle" onClick={() => setMiraOpen(!miraOpen)}>{miraOpen ? "Close question" : "Ask MIRA a question"}</button>{miraOpen && <form className="mira-form" onSubmit={askMira}><input value={miraQuestion} onChange={(event) => setMiraQuestion(event.target.value)} placeholder="Why is power dropping?"/><button type="submit">ASK</button></form>}<span className="mira-disclaimer">State-aware rule hints · no external AI or voice service configured.</span></div>}
-          <div className="resource-mini"><div className="sidebar-title">SYSTEM STATUS</div>{mission.systems.map((system) => <div className="system-row" key={system.id}><span className={`system-light ${system.status.toLowerCase()}`} /><span>{system.name}</span><b>{system.status}</b><button aria-label={`Toggle ${system.name}`} disabled={busy || mission.status !== "ACTIVE" || system.status === "FAULTED"} onClick={() => void dispatch({ type: "TOGGLE_SYSTEM", systemId: system.id, enabled: system.status === "OFF" })}>{system.status === "OFF" ? "ON" : "OFF"}</button></div>)}</div>
+          {mission.activeIncident && <div className="decision-card"><div className="sidebar-title">CHOOSE YOUR RESPONSE <span>{String(mission.activeIncident.choices.length).padStart(2, "0")} OPTIONS</span></div><p className="decision-intro">Read the evidence. Consider the system dependencies before committing the crew.</p>{mission.activeIncident.evidence.map((line) => <div className="evidence-row" key={line}><span>↳</span>{line}</div>)}<div className="choice-list">{mission.activeIncident.choices.map((choice, index) => <button type="button" key={choice.id} disabled={busy || (choice.cost.spareParts ?? 0) > mission.resources.spareParts} onClick={() => void dispatch({ type: "DECIDE", incidentId: mission.activeIncident!.id, choiceId: choice.id })}><span>{index + 1}</span><div><strong>{choice.title}</strong><small>{choice.detail}</small><em>{choice.cost.minutes ?? 1} min{choice.cost.batteryKwh ? ` · ${choice.cost.batteryKwh} kWh` : ""}{choice.cost.spareParts ? ` · ${choice.cost.spareParts} spare part` : ""}</em></div></button>)}</div><small className="training-tag">SCENARIO RESPONSE · NOT A REAL FLIGHT PROCEDURE</small></div>}
+          <section className="space-weather-card" aria-labelledby="space-weather-title">
+            <header><div><span>LIVE NASA DONKI DATA</span><h2 id="space-weather-title">Space-weather challenge</h2></div><button type="button" onClick={() => void loadSpaceWeatherChallenge()} disabled={spaceWeatherLoading}>{spaceWeatherLoading ? "LOADING…" : "REFRESH"}</button></header>
+            {spaceWeatherLoading && !spaceWeatherChallenge && <p className="space-weather-status">Loading a recent solar-flare event from NASA DONKI…</p>}
+            {spaceWeatherError && <p className="space-weather-error" role="alert">{spaceWeatherError}</p>}
+            {spaceWeatherChallenge && <>
+              <p className="space-weather-event">Latest recorded event in the past 30 days: <strong>{spaceWeatherChallenge.event.classType}</strong> · peak {spaceWeatherChallenge.event.peakTime} UTC{spaceWeatherChallenge.event.activeRegionNum !== null ? ` · active region ${spaceWeatherChallenge.event.activeRegionNum}` : ""}</p>
+              <p className="space-weather-data-source"><a href={spaceWeatherChallenge.event.url} target="_blank" rel="noreferrer">Verify this DONKI event ↗</a></p>
+              <p className="space-weather-question">{spaceWeatherChallenge.question}</p>
+              <div className="space-weather-options" role="group" aria-label="Choose the best evidence-based response">
+                {spaceWeatherChallenge.options.map((option) => {
+                  const answered = spaceWeatherAnswer !== null;
+                  const correct = option.id === spaceWeatherChallenge.correctOptionId;
+                  const selected = spaceWeatherAnswer === option.id;
+                  const resultClass = answered && correct ? "correct" : selected ? "incorrect" : "";
+                  return <button type="button" key={option.id} className={`space-weather-option ${resultClass}`} aria-pressed={selected} disabled={answered} onClick={() => setSpaceWeatherAnswer(option.id)}>
+                    <span>{option.id}</span>{option.text}
+                  </button>;
+                })}
+              </div>
+              {spaceWeatherAnswer !== null && <div className={`space-weather-feedback ${spaceWeatherAnswerIsCorrect ? "success" : "retry"}`} role="status">
+                <strong>{spaceWeatherAnswerIsCorrect ? "Correct — evidence before action." : "Not the best response. Review the correct choice."}</strong>
+                {!spaceWeatherAnswerIsCorrect && correctSpaceWeatherOption && <p><b>Best answer:</b> {correctSpaceWeatherOption.text}</p>}
+                <p>{spaceWeatherChallenge.explanation}</p>
+                <div className="space-weather-sources">{spaceWeatherChallenge.references.map((reference) => <a key={reference.url} href={reference.url} target="_blank" rel="noreferrer">{reference.label} ↗</a>)}</div>
+              </div>}
+              <small className="space-weather-note">Training exercise only—not an active alert, flight procedure, or live crew-dose reading. Refreshed {spaceWeatherChallenge.retrievedAt.replace("T", " ").replace("Z", " UTC")}.</small>
+            </>}
+          </section>
+          <div className="resource-mini"><div className="sidebar-title">SYSTEM STATUS</div>{mission.systems.map((system) => {
+            const turnOn = system.status === "OFF";
+            return <div className="system-row" key={system.id}><span className={`system-light ${system.status.toLowerCase()}`} /><span>{system.name}</span><b>{system.status}</b><button aria-label={`${turnOn ? "Turn on" : "Turn off"} ${system.name}`} title={`${turnOn ? "Turn on" : "Turn off"} ${system.name}`} aria-pressed={!turnOn} disabled={busy || mission.status !== "ACTIVE" || system.status === "FAULTED"} onClick={() => void dispatch({ type: "TOGGLE_SYSTEM", systemId: system.id, enabled: turnOn })}>{turnOn ? "Turn on" : "Turn off"}</button></div>;
+          })}</div>
           <div className="resource-mini"><div className="sidebar-title">STORES <span>{mission.resources.spareParts} SPARES</span></div><div className="store-bar"><span>WASTEWATER</span><strong>{fmt(mission.resources.wastewaterKg)} kg</strong></div><div className="store-bar"><span>QUARANTINED WATER</span><strong>{fmt(mission.resources.quarantinedWaterKg)} kg</strong></div><div className="store-bar"><span>FOOD STORED</span><strong>{fmt(mission.resources.foodKg)} kg</strong></div><div className="store-bar"><span>SPARE PARTS</span><strong>{mission.resources.spareParts}</strong></div></div>
         </aside>
       </section>
+      <section className="activity-log panel" id="activity-log" aria-labelledby="activity-log-title">
+        <div className="activity-log-heading">
+          <div><span className="eyebrow">MISSION FEEDBACK</span><h2 id="activity-log-title">Inspection &amp; activity log</h2></div>
+          <span>{mission.telemetry.length} {mission.telemetry.length === 1 ? "entry" : "entries"} · newest first</span>
+        </div>
+        <ol aria-live="polite" aria-relevant="additions text">
+          {[...mission.telemetry].reverse().slice(0, 8).map((entry) => (
+            <li className={`activity-entry ${entry.type.toLowerCase()}`} key={entry.id}>
+              <span className="activity-time">{logTimeLabel(entry.minute)}</span>
+              <div><strong>{entry.title}</strong><p>{entry.detail}</p></div>
+              <span className="activity-type">{entry.type}</span>
+            </li>
+          ))}
+        </ol>
+      </section>
       <footer className="game-footer"><span>SCIENCE DATA {mission.scienceDataVersion}</span><button type="button" onClick={() => setShowScience(!showScience)}>DATA SOURCES & MODEL LIMITATIONS</button><span>MISSION SAVE · {mission.id.slice(0, 8)}</span></footer>
       {showScience && <div className="science-overlay"><div className="science-overlay-card"><button onClick={() => setShowScience(false)}>×</button><h3>Science data & model boundary</h3><p><b>NASA baseline:</b> Oxygen and CO₂ metabolic reference rates and early planetary-base water use are sourced from NASA BVAD Revision 2.</p><p><b>Gameplay assumptions:</b> Starting resource inventories, equipment power ratings, water recovery throughput, illumination/dust profiles, warning thresholds, failure boundaries, crop model, task durations and repairs are simplified game values.</p><p><b>Important:</b> This starter does not calculate medical safety, full cabin pressure, dose exposure, live Moon Trek illumination, DONKI-driven dose, or validated Mars weather. It is an educational prototype, not mission-planning software.</p><a href={SCIENCE_REFERENCES.bvad.url} target="_blank" rel="noreferrer">Open NASA BVAD ↗</a></div></div>}
+      {miraWidgetOpen ? (
+        <section className="mira-widget" style={miraPositionStyle} aria-label="MIRA mission assistant">
+          <header className="mira-popup-header">
+            <div className="mira-heading"><img src="/assets/mira-mascot.png" className="mira-header-mascot" alt="" aria-hidden="true" draggable={false} /><div><strong>MIRA</strong><small>AI MASCOT · MISSION GUIDE</small></div><span className="mira-online">●</span></div>
+            <button type="button" className="mira-drag-handle" aria-label="Move MIRA with drag or arrow keys" title="Drag to move or use arrow keys" onPointerDown={startMiraDrag} onPointerMove={dragMira} onPointerUp={stopMiraDrag} onPointerCancel={stopMiraDrag} onKeyDown={moveMiraWithKeyboard}>MOVE</button>
+            <button type="button" className="mira-minimize" aria-label="Minimize MIRA" onClick={() => setMiraWidgetOpen(false)}>−</button>
+          </header>
+          <div className="mira-card mira-popup-body">
+            <p aria-live="polite">{miraReply}</p>
+            <button className="mira-hint" type="button" onClick={() => answerMira("hint")}>GIVE ME A HINT ↗</button>
+            <button className="mira-text-toggle" type="button" aria-expanded={miraOpen} onClick={() => setMiraOpen(!miraOpen)}>{miraOpen ? "Close question" : "Ask MIRA a question"}</button>
+            {miraOpen && <>
+              <div className="mira-prompts" aria-label="Suggested questions"><button type="button" onClick={() => answerMira("power")}>Power</button><button type="button" onClick={() => answerMira("water")}>Water</button><button type="button" onClick={() => answerMira("objectives")}>Objectives</button></div>
+              <form className="mira-form" onSubmit={askMira}><input aria-label="Ask MIRA about your mission" value={miraQuestion} onChange={(event) => setMiraQuestion(event.target.value)} placeholder="Ask about power, water, or crew…" maxLength={160} required/><button type="submit">ASK</button></form>
+            </>}
+            <span className="mira-disclaimer">Answers use this mission’s readings; no external AI service is connected.</span>
+          </div>
+        </section>
+      ) : (
+        <button type="button" className="mira-launcher" style={miraPositionStyle} aria-label="Open MIRA mission assistant" title="Click to open MIRA; drag to move" onClick={openMira} onPointerDown={startMiraDrag} onPointerMove={dragMira} onPointerUp={stopMiraDrag} onPointerCancel={stopMiraDrag} onKeyDown={moveMiraWithKeyboard}>
+          <img src="/assets/mira-mascot.png" className="mira-launcher-mascot" alt="" aria-hidden="true" draggable={false} />
+        </button>
+      )}
     </main>
   );
 }

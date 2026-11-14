@@ -8,14 +8,20 @@ A full-stack Next.js application for an educational Moon/Mars outpost survival g
 
 - Astronaut selection using the eight supplied character reference illustrations.
 - Player-created call sign and three selected supporting crew members.
+- Supporting crew patrol the outpost while idle. Select a crew member, choose an equipment station, then run one of its existing actions to assign the job and send them to that station.
 - Moon and Mars scenario selection.
 - A stylized 3D exterior outpost scene with habitat, command centre, air/water systems, greenhouse, airlock, solar field, communications mast, rover, battery bank, storm shelter, food store and maintenance area.
-- Click-to-walk movement and orbit camera controls. The current scene is a playable 3D vertical slice; fully walkable indoor room interiors, door/airlock state transitions, collision-aware navigation and rover driving are not yet complete.
+- Click-to-walk movement: click terrain or an equipment/building destination to send the selected astronaut there. Orbit camera controls are also available. The current scene is a playable 3D vertical slice; fully walkable indoor room interiors, door/airlock state transitions, collision-aware navigation and rover driving are not yet complete.
 - Fifteen equipment objects with action definitions, duration, requirements, failure conditions and modeled consequences.
+- Twenty-one daily mission objectives across the seven-day campaign (three unique, actionable objectives per day), with per-day progress and an overall completion count.
+- Separate Moon and Mars objective schedules link to NASA's lunar polar imagery and dust research, Mars Trek, MOXIE results, and InSight's dust-storm power record.
 - Mission HUD for kW, kWh, oxygen inventory, O₂/CO₂ partial pressure, potable water, wastewater, food and shelter readiness.
 - Five-option incident-response events when model conditions trigger an alert. Mars mode schedules a Day 1 dust-training incident; this is an authored lesson, not a forecast.
-- MIRA's local, state-aware hint logic (no AI service/API key required for this starter).
+- A five-choice space-weather challenge built from a recent NASA DONKI solar-flare event. Its single best response distinguishes flare classification from crew dose and points to radiation monitoring and approved mission procedures.
+- MIRA's local, state-aware hint logic behind a transparent mascot icon; click to open the draggable assistant window (no AI service/API key required for this starter).
 - Fixed minute tick, 1x/3x/pause controls, deterministic calculations and seeded water-check event logic.
+- Each mission day remains 24 simulated hours; Normal speed runs five simulated minutes per real second (about 4m 48s per day), Fast speed runs three times faster, and an optional advance-to-next-day control simulates forward while still stopping for incidents.
+- Standard, Challenging and Expert mission difficulty settings. Higher difficulties use lower starting gameplay reserves, reduced illustrative solar output and faster modeled equipment wear; NASA reference metabolism rates remain unchanged.
 - Mission API routes and PostgreSQL save/load.
 - Dockerfile and Docker Compose setup.
 
@@ -33,9 +39,13 @@ Source: https://ntrs.nasa.gov/citations/20210024855
 
 These are reference design assumptions, not universal Moon/Mars survival limits.
 
+Planet-specific mission objectives use NASA mission results and data portals as educational context. The linked observations are historical or architectural references, not live local conditions: for example, ShadowCam identifies permanently shadowed lunar terrain as a possible volatile prospecting target, MOXIE demonstrated oxygen production but did not provide crew-scale life support, and InSight's recorded dust-storm power drop is one historical event rather than a Mars forecast.
+
 ### Explicit gameplay assumptions
 
 The following are scenario settings, not NASA-certified values: starting inventory, cabin volume and temperature, battery capacity, array ratings, electrical loads, equipment generation/removal throughput, water processing throughput, food mass use, lighting/dust environmental profiles, equipment wear, action durations, warning triggers, and game-over boundaries.
+
+Difficulty settings modify only those gameplay assumptions. Standard preserves the original starting balance; Challenging and Expert reduce starting stores, solar output and system condition, and shorten the modeled maintenance interval. They do not change the NASA-derived crew consumption references.
 
 The application calculates oxygen and CO₂ partial pressures from inventory using an ideal-gas calculation and the configured cabin volume and temperature. It does **not** calculate total cabin pressure because inert-gas inventory and a complete atmosphere model are not included.
 
@@ -43,7 +53,7 @@ The game-over boundaries are deliberately labelled training-only. They are not m
 
 The water recovery model does not claim that ISS recovery performance is guaranteed on the Moon or Mars. Processed water is held in a quarantined inventory until a simplified quality gate passes.
 
-The Moon illumination and Mars dust factors are deterministic illustrative profiles, not live Moon Trek data, ephemeris calculations or a live Mars weather feed. DONKI, RadLab, Moon Trek data ingestion and true Mars communications ephemeris are not implemented in this starter.
+The Moon illumination and Mars dust factors are deterministic illustrative profiles, not live Moon Trek data, ephemeris calculations or a live Mars weather feed. The space-weather challenge reads recent solar-flare records from the current DONKI endpoint, but it does not calculate radiation exposure or make operational forecasts. DONKI describes its real-time research products as prototyping-quality; NOAA's Space Weather Prediction Center is the official U.S. forecast source. RadLab provides a reference archive of radiation measurements, not live crew dosimetry. Real crews must follow their mission's approved radiation-monitoring and response procedures.
 
 ## Requirements
 
@@ -156,6 +166,10 @@ Do not use the in-memory development store in production. The production server 
 
 Supported commands include `ADVANCE`, `SET_SPEED`, `TOGGLE_SYSTEM`, `DECIDE`, `INTERACT` and `OPERATE`.
 
+### Load the NASA space-weather challenge
+
+`GET /api/challenges/space-weather` retrieves recent solar-flare records from the public CCMC DONKI API, caches the response for 15 minutes, and creates a five-option training question with exactly one best response. This endpoint requires no API key.
+
 ## Tests
 
 ```bash
@@ -168,7 +182,7 @@ The repository includes unit tests for resource calculations, deterministic repl
 
 ## Character assets and 3D status
 
-The supplied PNG illustrations are included under `public/assets/characters/` and used for selection/crew reference cards. The in-world astronaut is currently procedural low-poly geometry with a selected suit-accent colour. The supplied images are **not** rigged 3D models. Exact face, hair, suit and accessories matching the references requires creating and validating rigged GLB/GLTF assets, which are not included in this package.
+The supplied PNG illustrations are included under `public/assets/characters/` and used for selection/crew reference cards and in-world head portraits. The in-world crew bodies are procedural low-poly geometry with character-specific accent colours and are not rigged 3D models. Exact face, hair, suit and accessories matching the references requires creating and validating rigged GLB/GLTF assets, which are not included in this package.
 
 Some source images have opaque backgrounds baked into the pixels. The application uses a CSS blend treatment on known opaque previews; it does not destructively overwrite the originals or claim that those files have been perfectly background-removed.
 
@@ -176,7 +190,7 @@ Some source images have opaque backgrounds baked into the pixels. The applicatio
 
 This is a deployable prototype, not a finished public classroom platform. The starter does not include user accounts, per-user mission authorization, rate limiting, an admin panel, or student privacy controls. Mission IDs are UUIDs, but UUID secrecy is not a substitute for authentication. Add authentication and ownership checks before allowing public, multi-user or student use.
 
-`NASA_API_KEY` and `OPENAI_API_KEY` are documented as server-side future integration settings only. No live NASA API ingestion or OpenAI chat/voice integration is active in this starter. Never put those keys in `NEXT_PUBLIC_*` variables or browser code.
+The DONKI challenge uses a server-side cached request to CCMC's public API and does not expose a key to the browser. `NASA_API_KEY` and `OPENAI_API_KEY` remain reserved for future integrations; no OpenAI chat/voice integration is active. Never put keys in `NEXT_PUBLIC_*` variables or browser code.
 
 ## Main folders
 
@@ -184,6 +198,7 @@ This is a deployable prototype, not a finished public classroom platform. The st
 src/
   app/
     api/health/                  Health endpoint
+    api/challenges/              Live DONKI space-weather challenge
     api/missions/                Mission create/load/command routes
   components/
     GameApp.tsx                  Setup, HUD, mission and interaction UI
@@ -194,7 +209,9 @@ src/
       science.ts                 Versioned NASA references and game assumptions
       equipment.ts               Fifteen physical equipment interaction specs
       types.ts                   Typed mission and command contracts
-    server/db.ts                 PostgreSQL persistence
+    server/
+      db.ts                      PostgreSQL persistence
+      donki.ts                   DONKI response validation and challenge builder
 public/assets/                   Supplied Launch Lab images
  tests/                          Simulation unit tests
 ```
@@ -204,7 +221,7 @@ public/assets/                   Supplied Launch Lab images
 1. Replace procedural crew shapes with rigged, reference-matched GLB character models.
 2. Add collision-aware room navigation, interior room geometry, true door/airlock states and animated rover driving.
 3. Replace training environment profiles with source-backed Moon Trek illumination/time-series and validated Mars environmental data.
-4. Add NASA DONKI/RadLab ingestion with server caching, source timestamps and data provenance.
+4. Add RadLab measurement ingestion and connect its historical readings to future lessons; retain source timestamps and provenance for every NASA feed.
 5. Validate oxygen/water/food/equipment subsystem equations against mission-specific design sources.
 6. Add authentication, player ownership, audit trail, rate limiting and classroom privacy safeguards.
 7. Add MIRA's secure, server-side AI and optional voice integration, grounded in current mission telemetry and source registry.

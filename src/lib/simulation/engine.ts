@@ -1,14 +1,79 @@
 import { GAMEPLAY_ASSUMPTIONS, SCIENCE_DATA_VERSION, SCIENCE_REFERENCES } from "./science";
 import { EQUIPMENT_CATALOG as equipmentCatalog } from "./equipment";
 import type {
-  CreateMissionInput, EquipmentSystem, IncidentChoice, IncidentKind, MissionCommand,
-  MissionIncident, MissionLogEntry, MissionState, Planet
+  CreateMissionInput, Difficulty, EquipmentSystem, IncidentChoice, IncidentKind, MissionCommand,
+  MissionIncident, MissionLogEntry, MissionObjective, MissionState, Planet
 } from "./types";
 
 const R = 8.314462618;
 const MOLAR_MASS_O2_KG = 0.031998;
 const MOLAR_MASS_CO2_KG = 0.04401;
 const MINUTES_PER_DAY = 1440;
+type ObjectiveSource = NonNullable<MissionObjective["reference"]>;
+type ScienceSource = { title: string; url: string; notes: string };
+
+function objective(
+  id: string,
+  day: number,
+  title: string,
+  source?: ScienceSource
+): Omit<MissionObjective, "complete"> {
+  return {
+    id,
+    day,
+    title,
+    ...(source ? { reference: { title: source.title, url: source.url, note: source.notes } satisfies ObjectiveSource } : {})
+  };
+}
+
+const DAILY_OBJECTIVES: Record<Planet, Omit<MissionObjective, "complete">[]> = {
+  MOON: [
+    objective("day-1-oxygen-inspection", 1, "Check oxygen-generation status for the lunar habitat", SCIENCE_REFERENCES.eclss),
+    objective("day-1-co2-inspection", 1, "Review CO₂ removal before planning surface activity", SCIENCE_REFERENCES.eclss),
+    objective("day-1-habitat-inspection", 1, "Inspect habitat pressure and thermal controls", SCIENCE_REFERENCES.eclss),
+    objective("day-2-water-processor-inspection", 2, "Inspect water recovery; do not assume polar ice is accessible", SCIENCE_REFERENCES.lunarPolarSurvey),
+    objective("day-2-water-analyzer-inspection", 2, "Check the analyzer before testing a lunar water batch", SCIENCE_REFERENCES.issWater2023),
+    objective("day-2-water-quality-check", 2, "Verify recovered water; local polar ice is not assumed", SCIENCE_REFERENCES.lunarPolarSurvey),
+    objective("day-3-rover-inspection", 3, "Inspect the rover before a lunar south-pole traverse", SCIENCE_REFERENCES.lunarPolarSurvey),
+    objective("day-3-rover-survey", 3, "Survey a route between sunlit terrain and shadowed craters", SCIENCE_REFERENCES.lunarPolarSurvey),
+    objective("day-3-array-inspection", 3, "Inspect solar-array condition against local light and shadow", SCIENCE_REFERENCES.lunarPolarSurvey),
+    objective("day-4-power-audit", 4, "Audit stored energy for changing polar illumination", SCIENCE_REFERENCES.lunarPolarSurvey),
+    objective("day-4-load-shedding", 4, "Shed optional loads to protect essentials during low-light periods", SCIENCE_REFERENCES.lunarPolarSurvey),
+    objective("day-4-communications-inspection", 4, "Inspect the relay link before remote surface work", SCIENCE_REFERENCES.spaceCommunications),
+    objective("day-5-shelter-preparation", 5, "Prepare the shelter for lunar surface operations"),
+    objective("day-5-shelter-inspection", 5, "Confirm the lunar crew shelter is ready"),
+    objective("day-5-airlock-inspection", 5, "Inspect the airlock for fine regolith carry-in", SCIENCE_REFERENCES.lunarDust),
+    objective("day-6-food-inventory", 6, "Audit food stores for the lunar crew", SCIENCE_REFERENCES.bvad),
+    objective("day-6-maintenance-inspection", 6, "Inspect tools and equipment for lunar-dust contamination", SCIENCE_REFERENCES.lunarDust),
+    objective("day-6-airlock-cycle", 6, "Complete an airlock cycle after surface operations", SCIENCE_REFERENCES.lunarDust),
+    objective("day-7-status-report", 7, "Send the final lunar surface status report", SCIENCE_REFERENCES.spaceCommunications),
+    objective("day-7-battery-inspection", 7, "Inspect stored energy after the polar lighting cycle", SCIENCE_REFERENCES.lunarPolarSurvey),
+    objective("day-7-food-inspection", 7, "Review food stores before the next lunar operation", SCIENCE_REFERENCES.bvad)
+  ],
+  MARS: [
+    objective("day-1-oxygen-inspection", 1, "Review MOXIE's demonstrated oxygen output—not a crew supply", SCIENCE_REFERENCES.marsMoxie),
+    objective("day-1-co2-inspection", 1, "Inspect CO₂ removal for the sealed Mars habitat", SCIENCE_REFERENCES.eclss),
+    objective("day-1-habitat-inspection", 1, "Check habitat pressure controls against the thin Martian exterior", SCIENCE_REFERENCES.marsMoxie),
+    objective("day-2-water-processor-inspection", 2, "Inspect water recovery; no Martian extraction is modeled", SCIENCE_REFERENCES.issWater2023),
+    objective("day-2-water-analyzer-inspection", 2, "Check the analyzer for habitat-recycled water", SCIENCE_REFERENCES.issWater2023),
+    objective("day-2-water-quality-check", 2, "Release only a verified recycled-water batch", SCIENCE_REFERENCES.eclss),
+    objective("day-3-rover-inspection", 3, "Inspect the rover before a Mars surface traverse", SCIENCE_REFERENCES.marsTrek),
+    objective("day-3-rover-survey", 3, "Survey terrain using Mars imagery as a planning reference", SCIENCE_REFERENCES.marsTrek),
+    objective("mars-day-3-maintenance-inspection", 3, "Inspect rover-support equipment for dust-related wear", SCIENCE_REFERENCES.marsDustStorm),
+    objective("day-4-power-audit", 4, "Compare power reserves with InSight's documented dust-storm decline", SCIENCE_REFERENCES.marsDustStorm),
+    objective("day-4-load-shedding", 4, "Shed optional loads if dust reduces solar input", SCIENCE_REFERENCES.marsDustStorm),
+    objective("day-4-communications-inspection", 4, "Review Mars relay operations and one-way communication delay", SCIENCE_REFERENCES.marsCommunications),
+    objective("day-5-shelter-preparation", 5, "Prepare the shelter for Mars surface operations"),
+    objective("day-5-shelter-inspection", 5, "Confirm the Mars crew shelter is ready"),
+    objective("mars-day-5-array-inspection", 5, "Inspect panels for dust-related power loss", SCIENCE_REFERENCES.marsDustStorm),
+    objective("day-6-food-inventory", 6, "Audit food stores for the Mars crew", SCIENCE_REFERENCES.bvad),
+    objective("mars-day-6-airlock-inspection", 6, "Inspect airlock sealing surfaces after dust-exposed operations", SCIENCE_REFERENCES.marsDustStorm),
+    objective("day-6-airlock-cycle", 6, "Complete an airlock cycle after Mars surface operations"),
+    objective("day-7-status-report", 7, "Queue the final Mars report with relay delay in mind", SCIENCE_REFERENCES.marsCommunications),
+    objective("day-7-battery-inspection", 7, "Inspect stored energy after dust-risk operations", SCIENCE_REFERENCES.marsDustStorm),
+    objective("day-7-food-inspection", 7, "Review food stores before the next Mars operating cycle", SCIENCE_REFERENCES.bvad)
+  ]
+};
 
 const ROSTER: Record<string, { name: string; role: string; image: string }> = {
   sofia: { name: "Sofia", role: "Commander", image: "sofia" },
@@ -49,16 +114,16 @@ function logEntry(state: MissionState, type: MissionLogEntry["type"], title: str
   };
 }
 
-function makeSystems(): EquipmentSystem[] {
+function makeSystems(condition = 100): EquipmentSystem[] {
   const A = GAMEPLAY_ASSUMPTIONS.systemLoadsKw;
   return [
-    { id: "life-support", name: "O₂ / CO₂ life support", room: "Air & Water Systems", status: "RUNNING", powerKw: A.lifeSupport, priority: 1, condition: 100, description: "Oxygen generation and carbon-dioxide removal. Both flows are simplified training-model rates.", sourceClass: "NASA_DESIGN_CONTEXT" },
-    { id: "water-recovery", name: "Water recovery", room: "Air & Water Systems", status: "RUNNING", powerKw: A.waterRecovery, priority: 2, condition: 100, description: "Processes wastewater and holds output for quality verification.", sourceClass: "NASA_DESIGN_CONTEXT" },
-    { id: "habitat", name: "Habitat essentials", room: "Habitat", status: "RUNNING", powerKw: A.habitat, priority: 3, condition: 100, description: "Lighting, thermal and essential habitat services; simplified aggregate load.", sourceClass: "GAMEPLAY_ASSUMPTION" },
-    { id: "communications", name: "Communications", room: "Command Center", status: "RUNNING", powerKw: A.communications, priority: 4, condition: 100, description: "Local base communications. Mars Earth link delay is a separate model.", sourceClass: "GAMEPLAY_ASSUMPTION" },
-    { id: "greenhouse", name: "Greenhouse lights & pumps", room: "Greenhouse", status: "RUNNING", powerKw: A.greenhouse, priority: 5, condition: 100, description: "Training load for controlled crop-environment equipment; crop yield is not validated.", sourceClass: "GAMEPLAY_ASSUMPTION" },
-    { id: "rover", name: "Rover charging", room: "Rover Garage", status: "RUNNING", powerKw: A.rover, priority: 6, condition: 100, description: "Charging and standby draw; vehicle propulsion is not included in this starter model.", sourceClass: "GAMEPLAY_ASSUMPTION" },
-    { id: "science-lab", name: "Science laboratory", room: "Command Center", status: "RUNNING", powerKw: A.scienceLab, priority: 7, condition: 100, description: "Deferrable science equipment load.", sourceClass: "GAMEPLAY_ASSUMPTION" }
+    { id: "life-support", name: "O₂ / CO₂ life support", room: "Air & Water Systems", status: "RUNNING", powerKw: A.lifeSupport, priority: 1, condition, description: "Oxygen generation and carbon-dioxide removal. Both flows are simplified training-model rates.", sourceClass: "NASA_DESIGN_CONTEXT" },
+    { id: "water-recovery", name: "Water recovery", room: "Air & Water Systems", status: "RUNNING", powerKw: A.waterRecovery, priority: 2, condition, description: "Processes wastewater and holds output for quality verification.", sourceClass: "NASA_DESIGN_CONTEXT" },
+    { id: "habitat", name: "Habitat essentials", room: "Habitat", status: "RUNNING", powerKw: A.habitat, priority: 3, condition, description: "Lighting, thermal and essential habitat services; simplified aggregate load.", sourceClass: "GAMEPLAY_ASSUMPTION" },
+    { id: "communications", name: "Communications", room: "Command Center", status: "RUNNING", powerKw: A.communications, priority: 4, condition, description: "Local base communications. Mars Earth link delay is a separate model.", sourceClass: "GAMEPLAY_ASSUMPTION" },
+    { id: "greenhouse", name: "Greenhouse lights & pumps", room: "Greenhouse", status: "RUNNING", powerKw: A.greenhouse, priority: 5, condition, description: "Training load for controlled crop-environment equipment; crop yield is not validated.", sourceClass: "GAMEPLAY_ASSUMPTION" },
+    { id: "rover", name: "Rover charging", room: "Rover Garage", status: "RUNNING", powerKw: A.rover, priority: 6, condition, description: "Charging and standby draw; vehicle propulsion is not included in this starter model.", sourceClass: "GAMEPLAY_ASSUMPTION" },
+    { id: "science-lab", name: "Science laboratory", room: "Command Center", status: "RUNNING", powerKw: A.scienceLab, priority: 7, condition, description: "Deferrable science equipment load.", sourceClass: "GAMEPLAY_ASSUMPTION" }
   ];
 }
 
@@ -84,6 +149,8 @@ function crewFromId(id: string, index: number, playerName: string, playerCharact
 }
 
 export function createMission(id: string, input: CreateMissionInput, now = new Date().toISOString()): MissionState {
+  const difficulty: Difficulty = input.difficulty ?? "STANDARD";
+  const difficultyProfile = GAMEPLAY_ASSUMPTIONS.difficulties[difficulty];
   const support = input.supportCrewIds.filter((crewId) => crewId !== input.playerCharacterId).slice(0, 3);
   const defaults = ["sofia", "christopher", "jewel", "alexander", "llian", "pilot"]
     .filter((crewId) => crewId !== input.playerCharacterId);
@@ -91,22 +158,22 @@ export function createMission(id: string, input: CreateMissionInput, now = new D
   const resources = {
     solarGenerationKw: 0,
     electricalDemandKw: 0,
-    batteryKwh: GAMEPLAY_ASSUMPTIONS.initialBatteryKwh,
+    batteryKwh: difficultyProfile.batteryKwh,
     batteryCapacityKwh: GAMEPLAY_ASSUMPTIONS.batteryCapacityKwh,
-    oxygenKg: GAMEPLAY_ASSUMPTIONS.initialOxygenKg,
+    oxygenKg: difficultyProfile.oxygenKg,
     co2Kg: GAMEPLAY_ASSUMPTIONS.initialCo2Kg,
-    potableWaterKg: GAMEPLAY_ASSUMPTIONS.initialPotableWaterKg,
+    potableWaterKg: difficultyProfile.potableWaterKg,
     wastewaterKg: 0,
     quarantinedWaterKg: 0,
-    foodKg: GAMEPLAY_ASSUMPTIONS.initialFoodKg,
+    foodKg: difficultyProfile.foodKg,
     cabinVolumeM3: GAMEPLAY_ASSUMPTIONS.cabinVolumeM3,
     cabinTemperatureK: GAMEPLAY_ASSUMPTIONS.cabinTemperatureK,
     oxygenPartialPressureKpa: 0,
     co2PartialPressureKpa: 0,
     powerUnmetKw: 0,
     solarFactor: 0,
-    panelCondition: 100,
-    spareParts: 4,
+    panelCondition: difficultyProfile.panelCondition,
+    spareParts: difficultyProfile.spareParts,
     shelterReady: false
   };
   const base: MissionState = {
@@ -114,6 +181,7 @@ export function createMission(id: string, input: CreateMissionInput, now = new D
     version: 1,
     scienceDataVersion: SCIENCE_DATA_VERSION,
     planet: input.planet,
+    difficulty,
     missionName: `${input.planet === "MOON" ? "Lunar" : "Mars"} Outpost — Day 1`,
     playerName: input.playerName.trim().slice(0, 32) || "Commander",
     playerCharacterId: input.playerCharacterId,
@@ -123,15 +191,11 @@ export function createMission(id: string, input: CreateMissionInput, now = new D
     speed: 1,
     rngSeed: 260114,
     resources,
-    systems: makeSystems(),
+    systems: makeSystems(difficultyProfile.equipmentCondition),
     crew: [crewFromId(input.playerCharacterId, 0, input.playerName, input.playerCharacterId), ...support.map((crewId, i) => crewFromId(crewId, i + 1, input.playerName, input.playerCharacterId))],
     activeIncident: null,
     resolvedIncidentIds: [],
-    objectives: [
-      { id: "life-support-inspection", title: "Inspect life-support equipment", complete: false },
-      { id: "water-quality", title: "Verify potable-water quality", complete: false },
-      { id: "rover-survey", title: "Complete rover inspection", complete: false }
-    ],
+    objectives: DAILY_OBJECTIVES[input.planet].map((objective) => ({ ...objective, complete: false })),
     eventFlags: [],
     telemetry: [],
     lastMessage: "Mission initialized. Inspect the base and keep essential systems running.",
@@ -143,6 +207,46 @@ export function createMission(id: string, input: CreateMissionInput, now = new D
     ...initialized,
     telemetry: [logEntry(initialized, "SYSTEM", "Mission initialized", `Four-person ${input.planet.toLowerCase()} training mission. Starting equipment ratings and inventories are gameplay assumptions.`)]
   };
+}
+
+export function ensureDailyObjectives(state: MissionState): MissionState {
+  const dailyObjectives = DAILY_OBJECTIVES[state.planet];
+  const expectedById = new Map(dailyObjectives.map((objective) => [objective.id, objective]));
+  const expectedIds = new Set(expectedById.keys());
+  const actualIds = new Set(state.objectives.map((objective) => objective.id));
+  const isCompleteSchedule = state.objectives.length === dailyObjectives.length &&
+    actualIds.size === expectedIds.size &&
+    state.objectives.every((objective) => {
+      const expected = expectedById.get(objective.id);
+      return expected !== undefined &&
+        Number.isInteger(objective.day) &&
+        objective.day === expected.day &&
+        objective.title === expected.title &&
+        objective.reference?.url === expected.reference?.url;
+    });
+  if (isCompleteSchedule) return state;
+
+  const completedIds = new Set(state.objectives.filter((objective) => objective.complete).map((objective) => objective.id));
+  const legacyToDaily: Record<string, string> = {
+    "life-support-inspection": "day-1-oxygen-inspection",
+    "water-quality": "day-2-water-quality-check",
+    "rover-survey": "day-3-rover-inspection"
+  };
+  for (const [legacyId, dailyId] of Object.entries(legacyToDaily)) {
+    if (completedIds.has(legacyId)) completedIds.add(dailyId);
+  }
+  return {
+    ...state,
+    objectives: dailyObjectives.map((objective) => ({
+      ...objective,
+      complete: completedIds.has(objective.id)
+    }))
+  };
+}
+
+export function areDailyObjectivesComplete(state: MissionState, day = state.day): boolean {
+  const objectives = state.objectives.filter((objective) => (objective.day ?? 1) === day);
+  return objectives.length === 3 && objectives.every((objective) => objective.complete);
 }
 
 function getSystem(state: MissionState, id: string): EquipmentSystem | undefined {
@@ -271,7 +375,8 @@ function tickOneMinute(original: MissionState): MissionState {
   const dtHours = 1 / 60;
   const solarFactor = environmentFactor(state);
   const rated = GAMEPLAY_ASSUMPTIONS.solarArrayRatedKw[state.planet];
-  const solarGenerationKw = rated * solarFactor;
+  const difficultyProfile = GAMEPLAY_ASSUMPTIONS.difficulties[state.difficulty ?? "STANDARD"];
+  const solarGenerationKw = rated * solarFactor * difficultyProfile.solarOutputMultiplier;
   let availableKw = solarGenerationKw + Math.min(GAMEPLAY_ASSUMPTIONS.maxBatteryDischargeKw, state.resources.batteryKwh * 60);
   const systems = [...state.systems].sort((a, b) => a.priority - b.priority);
   const runningIds = new Set<string>();
@@ -320,7 +425,7 @@ function tickOneMinute(original: MissionState): MissionState {
   let updatedSystems = state.systems.map((system) => {
     let condition = system.condition;
     if (runningIds.has(system.id) && (system.id === "life-support" || system.id === "water-recovery")) {
-      if ((state.elapsedMinutes + 1) % 360 === 0) condition = Math.max(50, condition - 1);
+      if (state.elapsedMinutes % difficultyProfile.wearIntervalMinutes === 0) condition = Math.max(50, condition - 1);
     }
     return { ...system, condition, status: system.status === "RUNNING" && !runningIds.has(system.id) ? "DEGRADED" : system.status };
   });
@@ -366,12 +471,18 @@ function tickOneMinute(original: MissionState): MissionState {
     const allObjectives = state.objectives.every((objective) => objective.complete);
     const essentialsStable = state.resources.oxygenKg >= crewReserveOxygenKg && state.resources.potableWaterKg >= crewReserveWaterKg && state.resources.foodKg >= crewReserveFoodKg && state.resources.oxygenPartialPressureKpa >= failed.oxygenPartialPressureKpa && state.resources.co2PartialPressureKpa <= failed.co2PartialPressureKpa;
     const status = allObjectives && essentialsStable ? "SUCCESS" : "FAILED";
-    const message = status === "SUCCESS" ? "Seven days completed and all training objectives were verified against the NASA reference reserves." : "Seven days completed, but one or more mission objectives or emergency reserve thresholds were not met.";
+    const message = status === "SUCCESS" ? "Seven days completed, all 21 daily objectives were verified, and NASA reference reserves were maintained." : "Seven days completed, but one or more daily objectives or emergency reserve thresholds were not met.";
     state = { ...state, status, lastMessage: message, telemetry: [...state.telemetry, logEntry(state, "RESULT", status === "SUCCESS" ? "Mission complete" : "Mission incomplete", message)] };
   }
 
   if (state.elapsedMinutes === 1) state = { ...state, telemetry: [...state.telemetry, logEntry(state, "SYSTEM", "Simulation started", "One tick represents one simulated minute. Rendering frame rate does not affect resource calculations.")] };
-  if (state.day > original.day) state = { ...state, telemetry: [...state.telemetry, logEntry(state, "SYSTEM", `Mission day ${state.day}`, "New operational day. Review resources and equipment before optional work.")] };
+  if (state.day > original.day) {
+    const todaysObjectives = state.objectives.filter((objective) => objective.day === state.day).map((objective) => objective.title);
+    state = {
+      ...state,
+      telemetry: [...state.telemetry, logEntry(state, "SYSTEM", `Mission day ${state.day}`, `New operational day. Today's three objectives: ${todaysObjectives.join("; ")}`)]
+    };
+  }
   if (state.resources.powerUnmetKw > 0.01 && !state.eventFlags.includes("unmet-power-warning")) {
     state = { ...state, eventFlags: [...state.eventFlags, "unmet-power-warning"], telemetry: [...state.telemetry, logEntry(state, "WARNING", "Electrical demand not fully met", `${state.resources.powerUnmetKw.toFixed(2)} kW of requested load could not be supplied. Lower-priority equipment may degrade.`)] };
   }
@@ -380,13 +491,31 @@ function tickOneMinute(original: MissionState): MissionState {
 }
 
 export function advanceMinutes(state: MissionState, minutes: number): MissionState {
+  state = ensureDailyObjectives(state);
   const count = Math.max(0, Math.min(10_080, Math.floor(minutes)));
   let next = state;
-  for (let i = 0; i < count && next.status === "ACTIVE" && !next.activeIncident; i += 1) next = tickOneMinute(next);
+  let blockedByObjectives = false;
+  for (let i = 0; i < count && next.status === "ACTIVE" && !next.activeIncident; i += 1) {
+    if (next.elapsedMinutes >= next.day * MINUTES_PER_DAY - 1 && !areDailyObjectivesComplete(next)) {
+      blockedByObjectives = true;
+      break;
+    }
+    next = tickOneMinute(next);
+  }
+  if (blockedByObjectives) {
+    const message = `Day ${next.day} is paused at its end. Complete all three daily objectives before advancing.`;
+    next = {
+      ...next,
+      lastMessage: message,
+      telemetry: [...next.telemetry, logEntry(next, "SYSTEM", "Daily objectives required", message)]
+    };
+  }
   return { ...next, updatedAt: simulatedTimestamp(next) };
 }
 
 function markObjective(state: MissionState, id: string): MissionState {
+  const target = state.objectives.find((objective) => objective.id === id);
+  if (!target || target.complete || (target.day ?? 1) > state.day) return state;
   return { ...state, objectives: state.objectives.map((objective) => objective.id === id ? { ...objective, complete: true } : objective) };
 }
 
@@ -419,12 +548,18 @@ function applyChoice(state: MissionState, choiceId: string): MissionState {
       next = updateSystem(next, "life-support", { status: "RUNNING", condition: 92 });
       next = { ...next, crew: next.crew.map((c) => c.role === "Engineer" ? { ...c, currentTask: "Repairing air loop", fatigue: clamp(c.fatigue + 6, 0, 100) } : c) };
       break;
-    case "check-sensor":
-    case "inspect-air-sample": next = markObjective(next, "life-support-inspection"); break;
+    case "check-sensor": next = markObjective(next, "day-1-co2-inspection"); break;
+    case "inspect-air-sample": next = markObjective(next, "day-1-oxygen-inspection"); break;
     case "shed-loads": next = { ...next, systems: allNonessential(next) }; break;
     case "quarantine-batch": next = { ...next, resources: { ...next.resources, quarantinedWaterKg: next.resources.quarantinedWaterKg + 6 } }; break;
-    case "reprocess-batch": next = { ...next, resources: { ...next.resources, batteryKwh: Math.max(0, next.resources.batteryKwh - 0.8), quarantinedWaterKg: Math.max(0, next.resources.quarantinedWaterKg - 6), potableWaterKg: next.resources.potableWaterKg + 4 } }; next = markObjective(next, "water-quality"); break;
-    case "inspect-filter": next = updateSystem(next, "water-recovery", { status: "RUNNING", condition: 95 }); next = markObjective(next, "water-quality"); break;
+    case "reprocess-batch":
+      next = { ...next, resources: { ...next.resources, batteryKwh: Math.max(0, next.resources.batteryKwh - 0.8), quarantinedWaterKg: Math.max(0, next.resources.quarantinedWaterKg - 6), potableWaterKg: next.resources.potableWaterKg + 4 } };
+      next = markObjective(next, "day-2-water-quality-check");
+      break;
+    case "inspect-filter":
+      next = updateSystem(next, "water-recovery", { status: "RUNNING", condition: 95 });
+      next = markObjective(next, "day-2-water-processor-inspection");
+      break;
     case "use-reserve": break;
     case "release-untested": next = { ...next, resources: { ...next.resources, quarantinedWaterKg: next.resources.quarantinedWaterKg + 6 }, lastMessage: "Untested water remains quarantined; the system does not count it as potable." }; break;
     case "switch-backup": next = updateSystem(next, "life-support", { status: "RUNNING", condition: Math.max(75, getSystem(next, "life-support")?.condition ?? 75) }); break;
@@ -443,29 +578,43 @@ function applyChoice(state: MissionState, choiceId: string): MissionState {
     lastMessage: choice ? `${choice.title} selected. ${choice.detail}` : "Incident response recorded.",
     telemetry: [...next.telemetry, logEntry(next, "PLAYER", incident.title, `Selected: ${choice?.title ?? choiceId}. ${choice?.detail ?? ""}`)]
   };
-  if (incident.kind === "WATER_QUALITY" && ["quarantine-batch", "reprocess-batch", "inspect-filter"].includes(choiceId)) next = markObjective(next, "water-quality");
   return next;
 }
 
-function operateEquipment(state: MissionState, equipmentId: string, actionId: string): MissionState {
+function operateEquipment(state: MissionState, equipmentId: string, actionId: string, crewId?: string): MissionState {
   const equipment = equipmentCatalog.find((item) => item.id === equipmentId);
   const action = equipment?.actions.find((item) => item.id === actionId);
   if (!equipment || !action) return { ...state, lastMessage: "That equipment action is not available." };
-  if (!state.crew.some((member) => member.available)) return { ...state, lastMessage: "No crew member is available for this task." };
+  const operator = crewId
+    ? state.crew.find((member) => member.id === crewId)
+    : state.crew.find((member) => member.id === "crew-0") ?? state.crew.find((member) => member.available);
+  if (!operator?.available) return { ...state, lastMessage: "The selected crew member is unavailable for this task." };
   let next = state;
   const res = { ...state.resources };
   let result = action.description;
   switch (actionId) {
     case "inspect":
-      if (equipmentId === "oxygen-generator" || equipmentId === "co2-scrubber") next = markObjective(next, "life-support-inspection");
-      if (equipmentId === "water-processor" || equipmentId === "water-test") next = markObjective(next, "water-quality");
-      if (equipmentId === "rover") next = markObjective(next, "rover-survey");
+      result = inspectionReport(state, equipmentId);
+      if (equipmentId === "oxygen-generator") next = markObjective(next, "day-1-oxygen-inspection");
+      if (equipmentId === "co2-scrubber") next = markObjective(next, "day-1-co2-inspection");
+      if (equipmentId === "habitat-control") next = markObjective(next, "day-1-habitat-inspection");
+      if (equipmentId === "water-processor") next = markObjective(next, "day-2-water-processor-inspection");
+      if (equipmentId === "water-test") next = markObjective(next, "day-2-water-analyzer-inspection");
+      if (equipmentId === "rover") next = markObjective(next, "day-3-rover-inspection");
+      if (equipmentId === "solar-array") next = markObjective(next, state.planet === "MARS" ? "mars-day-5-array-inspection" : "day-3-array-inspection");
+      if (equipmentId === "communications-mast") next = markObjective(next, "day-4-communications-inspection");
+      if (equipmentId === "radiation-shelter") next = markObjective(next, "day-5-shelter-inspection");
+      if (equipmentId === "airlock-panel") next = markObjective(next, state.planet === "MARS" ? "mars-day-6-airlock-inspection" : "day-5-airlock-inspection");
+      if (equipmentId === "maintenance-bench") next = markObjective(next, state.planet === "MARS" ? "mars-day-3-maintenance-inspection" : "day-6-maintenance-inspection");
+      if (equipmentId === "battery-bank") next = markObjective(next, "day-7-battery-inspection");
+      if (equipmentId === "food-store") next = markObjective(next, "day-7-food-inspection");
       break;
     case "enable-habitat":
       next = updateSystem(next, "habitat", { status: "RUNNING" });
       break;
     case "essential-mode":
       next = { ...next, systems: next.systems.map((system) => ["greenhouse", "rover", "science-lab"].includes(system.id) ? { ...system, status: "OFF" } : system) };
+      next = markObjective(next, "day-4-load-shedding");
       break;
     case "restart-air":
     case "boost-scrubber":
@@ -489,7 +638,7 @@ function operateEquipment(state: MissionState, equipmentId: string, actionId: st
         res.potableWaterKg += res.quarantinedWaterKg;
         res.quarantinedWaterKg = 0;
         next = { ...next, resources: res };
-        next = markObjective(next, "water-quality");
+        next = markObjective(next, "day-2-water-quality-check");
         result = "Training quality gate passed. The held batch has been released into the potable inventory. This simplified pass/fail check is not a real water assay.";
       } else {
         result = "Training quality gate failed. The batch remains quarantined; inspect the processing filter and retest.";
@@ -503,6 +652,7 @@ function operateEquipment(state: MissionState, equipmentId: string, actionId: st
       if (getSystem(next, "habitat")?.status !== "RUNNING") return { ...next, lastMessage: "Airlock sequence blocked: habitat services are not available." };
       res.batteryKwh = Math.max(0, res.batteryKwh - 0.15);
       next = { ...next, resources: res };
+      next = markObjective(next, "day-6-airlock-cycle");
       break;
     case "clean-array":
       if (res.spareParts < 1 || res.batteryKwh < 0.2) return { ...next, lastMessage: "Cleaning kit or electrical reserve unavailable." };
@@ -513,24 +663,28 @@ function operateEquipment(state: MissionState, equipmentId: string, actionId: st
       break;
     case "battery-audit":
       result = `Generation ${res.solarGenerationKw.toFixed(2)} kW; demand ${res.electricalDemandKw.toFixed(2)} kW; stored energy ${res.batteryKwh.toFixed(1)} kWh. kW is power; kWh is stored energy.`;
+      next = markObjective(next, "day-4-power-audit");
       break;
     case "send-status":
       result = next.planet === "MARS"
         ? `Status report queued. NASA's communication reference spans about ${SOURCE_REFERENCES.marsCommunications.oneWayDelayMinutes.low}–${SOURCE_REFERENCES.marsCommunications.oneWayDelayMinutes.high} minutes one way depending on geometry; this app does not calculate live ephemeris.`
         : "Status report queued to the lunar relay. No live link budget is calculated in this prototype.";
+      next = markObjective(next, "day-7-status-report");
       break;
     case "rover-survey":
       if (getSystem(next, "rover")?.status === "OFF" || res.batteryKwh < 2) return { ...next, lastMessage: "Rover survey unavailable. Restore rover service and battery reserve first." };
       res.batteryKwh -= 2;
       next = { ...next, resources: res };
-      next = markObjective(next, "rover-survey");
+      next = markObjective(next, "day-3-rover-survey");
       break;
     case "secure-shelter":
       res.shelterReady = true;
       next = { ...next, resources: res };
+      next = markObjective(next, "day-5-shelter-preparation");
       break;
     case "food-inventory":
       result = `Food reserve: ${res.foodKg.toFixed(1)} kg. Food energy and crop harvest are not calculated in this starter build; its food-use rate is a gameplay assumption.`;
+      next = markObjective(next, "day-6-food-inventory");
       break;
     case "repair-water":
       if (res.spareParts < 1) return { ...next, lastMessage: "No spare parts remain. Repairs are limited." };
@@ -543,16 +697,50 @@ function operateEquipment(state: MissionState, equipmentId: string, actionId: st
   }
   next = {
     ...next,
-    lastMessage: `${action.label}: ${result}`,
-    telemetry: [...next.telemetry, logEntry(next, "PLAYER", `${equipment.name} — ${action.label}`, result)],
-    crew: next.crew.map((member, index) => index === 0 ? { ...member, currentTask: action.label, fatigue: clamp(member.fatigue + Math.min(8, action.durationMinutes / 5), 0, 100) } : member),
+    lastMessage: operator.id === "crew-0" ? `${action.label}: ${result}` : `${operator.name} assigned: ${action.label}: ${result}`,
+    telemetry: [...next.telemetry, logEntry(next, "PLAYER", `${operator.id === "crew-0" ? "" : `${operator.name} — `}${equipment.name} — ${action.label}`, result)],
+    crew: next.crew.map((member) => member.id === operator.id
+      ? { ...member, currentTask: action.label, currentTaskEquipmentId: equipment.id, fatigue: clamp(member.fatigue + Math.min(8, action.durationMinutes / 5), 0, 100) }
+      : member),
     updatedAt: simulatedTimestamp(next)
   };
   return action.durationMinutes > 0 ? advanceMinutes(next, action.durationMinutes) : next;
 }
 
+function inspectionReport(state: MissionState, equipmentId: string): string {
+  const equipment = equipmentCatalog.find((item) => item.id === equipmentId);
+  const system = equipment?.systemId ? getSystem(state, equipment.systemId) : undefined;
+  const systemSummary = system
+    ? `${system.name}: ${system.status}, ${system.condition}% condition, ${system.powerKw.toFixed(1)} kW load.`
+    : "";
+  const r = state.resources;
+  switch (equipmentId) {
+    case "oxygen-generator":
+    case "co2-scrubber":
+      return `${systemSummary} O₂ ${r.oxygenKg.toFixed(1)} kg (${r.oxygenPartialPressureKpa.toFixed(2)} kPa); CO₂ ${r.co2Kg.toFixed(1)} kg (${r.co2PartialPressureKpa.toFixed(3)} kPa).`;
+    case "water-processor":
+    case "water-test":
+      return `${systemSummary} Potable ${r.potableWaterKg.toFixed(1)} kg; wastewater ${r.wastewaterKg.toFixed(1)} kg; quarantined batch ${r.quarantinedWaterKg.toFixed(1)} kg.`;
+    case "power-board":
+      return `Solar generation ${r.solarGenerationKw.toFixed(2)} kW; demand ${r.electricalDemandKw.toFixed(2)} kW; unmet load ${r.powerUnmetKw.toFixed(2)} kW; battery ${r.batteryKwh.toFixed(1)} kWh.`;
+    case "solar-array":
+      return `Array output ${r.solarGenerationKw.toFixed(2)} kW; training solar factor ${r.solarFactor.toFixed(2)}; panel condition ${r.panelCondition.toFixed(0)}%.`;
+    case "battery-bank":
+      return `Stored energy ${r.batteryKwh.toFixed(1)} of ${r.batteryCapacityKwh.toFixed(1)} kWh; generation ${r.solarGenerationKw.toFixed(2)} kW versus demand ${r.electricalDemandKw.toFixed(2)} kW.`;
+    case "food-store":
+      return `Food reserve ${r.foodKg.toFixed(1)} kg for ${state.crew.length} crew. Food use is a gameplay assumption in this training model.`;
+    case "rover":
+      return `${systemSummary} Battery reserve ${r.batteryKwh.toFixed(1)} kWh.`;
+    case "radiation-shelter":
+      return `Shelter readiness: ${r.shelterReady ? "ready" : "not prepared"}. This training model does not calculate radiation dose reduction.`;
+    default:
+      return systemSummary || `${equipment?.name ?? "Equipment"} inspection recorded. Check the equipment state and related resources shown in the mission dashboard.`;
+  }
+}
+
 
 export function applyCommand(state: MissionState, command: MissionCommand): MissionState {
+  state = ensureDailyObjectives(state);
   if (state.status !== "ACTIVE" && command.type !== "SET_SPEED") return state;
   if (command.type === "ADVANCE") return advanceMinutes(state, command.minutes);
   if (command.type === "SET_SPEED") return { ...state, speed: command.speed, updatedAt: simulatedTimestamp(state) };
@@ -572,36 +760,84 @@ export function applyCommand(state: MissionState, command: MissionCommand): Miss
     const resolved = applyChoice(state, command.choiceId);
     return advanceMinutes(resolved, choice.cost.minutes ?? 1);
   }
-  if (command.type === "OPERATE") return operateEquipment(state, command.equipmentId, command.actionId);
+  if (command.type === "OPERATE") return operateEquipment(state, command.equipmentId, command.actionId, command.crewId);
   if (command.type === "INTERACT") {
-    let next = state;
-    if (command.equipmentId === "life-support") next = markObjective(next, "life-support-inspection");
-    if (command.equipmentId === "water-recovery") next = markObjective(next, "water-quality");
-    if (command.equipmentId === "rover") next = markObjective(next, "rover-survey");
+    const next = state;
+    const operator = command.crewId ? state.crew.find((member) => member.id === command.crewId) : undefined;
+    if (command.crewId && !operator?.available) return { ...state, lastMessage: "The selected crew member is unavailable for this inspection." };
     const title = command.equipmentId.replaceAll("-", " ");
-    return { ...next, lastMessage: `Inspected ${title}. Review the equipment state and connected resources.`, telemetry: [...next.telemetry, logEntry(next, "PLAYER", "Equipment inspected", `Player inspected ${title}.`)], updatedAt: simulatedTimestamp(next) };
+    const equipment = equipmentCatalog.find((item) => item.id === command.equipmentId);
+    const report = equipment
+      ? inspectionReport(next, command.equipmentId)
+      : `Inspected ${title}. Review the equipment state and connected resources.`;
+    const operatorPrefix = operator ? `${operator.name} — ` : "";
+    return {
+      ...next,
+      lastMessage: `${operator ? `${operator.name}: ` : ""}Inspection — ${title}: ${report}`,
+      telemetry: [...next.telemetry, logEntry(next, "PLAYER", `${operatorPrefix}Inspection — ${title}`, report)],
+      crew: operator
+        ? next.crew.map((member) => member.id === operator.id
+          ? { ...member, currentTask: `Inspecting ${equipment?.name ?? title}`, currentTaskEquipmentId: command.equipmentId }
+          : member)
+        : next.crew,
+      updatedAt: simulatedTimestamp(next)
+    };
   }
   return state;
 }
 
 export function getEducationalHint(state: MissionState, question = "hint"): string {
-  const q = question.toLowerCase();
-  if (q.includes("power") || state.resources.batteryKwh < GAMEPLAY_ASSUMPTIONS.warningBatteryKwh) {
-    return `Look at the power board: generation is ${state.resources.solarGenerationKw.toFixed(1)} kW and the modeled demand is ${state.resources.electricalDemandKw.toFixed(1)} kW. Which loads can wait without interrupting life support?`;
+  const q = question.toLowerCase().replaceAll("₂", "2");
+  const r = state.resources;
+  if (q.includes("power") || q.includes("battery") || q.includes("energy") || (q === "hint" && r.batteryKwh < GAMEPLAY_ASSUMPTIONS.warningBatteryKwh)) {
+    const optionalLoads = state.systems.filter((system) => ["greenhouse", "rover", "science-lab"].includes(system.id) && system.status === "RUNNING").map((system) => system.name);
+    return `Power check: solar ${r.solarGenerationKw.toFixed(2)} kW, demand ${r.electricalDemandKw.toFixed(2)} kW, battery ${r.batteryKwh.toFixed(1)} kWh. Life support has priority; ${optionalLoads.length ? `optional loads currently running: ${optionalLoads.join(", ")}` : "no optional loads are currently running"}. Which load could you defer if the reserve keeps falling?`;
   }
-  if (q.includes("co2") || state.resources.co2PartialPressureKpa > GAMEPLAY_ASSUMPTIONS.warningCo2PartialPressureKpa) {
-    return `Compare the CO₂ trend with the air-loop status. Is the removal equipment running, and does it have enough electrical power?`;
+  if (q.includes("co2") || q.includes("carbon") || q.includes("scrubber") || (q === "hint" && r.co2PartialPressureKpa > GAMEPLAY_ASSUMPTIONS.warningCo2PartialPressureKpa)) {
+    const airLoop = getSystem(state, "life-support");
+    return `CO₂ is ${r.co2Kg.toFixed(1)} kg (${r.co2PartialPressureKpa.toFixed(3)} kPa partial pressure). The air loop is ${airLoop?.status.toLowerCase() ?? "unavailable"} at ${airLoop?.condition ?? 0}% condition. What could you check before changing the system settings?`;
   }
-  if (q.includes("water") || state.resources.potableWaterKg < GAMEPLAY_ASSUMPTIONS.warningWaterKg) {
-    return `Check the water quality state before counting a processed batch as potable. What can the crew use safely while that batch is held?`;
+  if (q.includes("water") || q.includes("drink") || (q === "hint" && r.potableWaterKg < GAMEPLAY_ASSUMPTIONS.warningWaterKg)) {
+    return `Water check: ${r.potableWaterKg.toFixed(1)} kg potable, ${r.wastewaterKg.toFixed(1)} kg wastewater, and ${r.quarantinedWaterKg.toFixed(1)} kg held for testing. A quarantined batch is not potable. What verified supply can the crew use now?`;
   }
-  if (q.includes("mars") || state.planet === "MARS") {
-    return "Mars is far away. Mission Control messages can be delayed, so what information can the crew verify and act on locally before waiting for a reply?";
+  if (q.includes("oxygen") || q.includes("o2") || q.includes("air")) {
+    const airLoop = getSystem(state, "life-support");
+    return `Oxygen check: ${r.oxygenKg.toFixed(1)} kg in the modeled inventory and ${r.oxygenPartialPressureKpa.toFixed(2)} kPa partial pressure. Life support is ${airLoop?.status.toLowerCase() ?? "unavailable"}. What do the system status and trend tell you?`;
   }
-  if (q.includes("moon") || state.planet === "MOON") {
-    return "Lunar sunlight depends on the local terrain and time. Check the panel output first, then compare it with the current electrical demand.";
+  if (q.includes("food") || q.includes("meal")) {
+    return `The current food inventory is ${r.foodKg.toFixed(1)} kg for ${state.crew.length} crew. Food-use rate is a gameplay assumption, not a validated nutrition plan. How does this reserve compare with the remaining mission?`;
   }
-  return "Start by inspecting the room's equipment. Look at its status, power draw, condition and the resources it supports. What changed most recently?";
+  if (q.includes("solar") || q.includes("panel") || q.includes("sun") || (q === "hint" && state.planet === "MOON")) {
+    return `Array check: output ${r.solarGenerationKw.toFixed(2)} kW, training solar factor ${r.solarFactor.toFixed(2)}, panel condition ${r.panelCondition.toFixed(0)}%. Compare generation with demand (${r.electricalDemandKw.toFixed(2)} kW). Is there enough power for every active load?`;
+  }
+  if (q.includes("objective") || q.includes("goal") || q.includes("task") || q.includes("next")) {
+    const todaysObjectives = state.objectives.filter((objective) => (objective.day ?? 1) === state.day);
+    const pendingToday = todaysObjectives.filter((objective) => !objective.complete);
+    const completedCount = state.objectives.filter((objective) => objective.complete).length;
+    return pendingToday.length
+      ? `Day ${state.day} has ${pendingToday.length} of 3 objectives remaining: ${pendingToday.map((objective) => objective.title).join("; ")}. Overall progress is ${completedCount}/${state.objectives.length}. Which task will you tackle first?`
+      : completedCount === state.objectives.length
+        ? "All 21 daily objectives are complete. Keep the essential systems and emergency reserves stable through Day 7."
+        : `You have completed all three objectives for Day ${state.day}. Overall progress is ${completedCount}/${state.objectives.length}. What would you like to review next?`;
+  }
+  if (q.includes("alert") || q.includes("incident") || q.includes("warning")) {
+    return state.activeIncident
+      ? `Current alert: ${state.activeIncident.title}. Evidence: ${state.activeIncident.evidence.join("; ")}. Which response protects essential services while addressing the cause?`
+      : "There is no active alert. Keep an eye on battery, oxygen, CO₂, and potable-water indicators; what would you like to inspect?";
+  }
+  if (q.includes("day") || q.includes("time") || q.includes("how long")) {
+    const hours = Math.floor((state.elapsedMinutes % MINUTES_PER_DAY) / 60);
+    const minutes = state.elapsedMinutes % 60;
+    return `It is Day ${state.day} of 7, ${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")} mission time. The next objective is to complete the remaining checks and keep reserves above their training limits. What would you like to check first?`;
+  }
+  if (q.includes("crew")) {
+    const available = state.crew.filter((member) => member.available).length;
+    return `${available} of ${state.crew.length} crew members are available. Current tasks: ${state.crew.map((member) => `${member.name} — ${member.currentTask}`).join("; ")}. Who is free to handle the next inspection?`;
+  }
+  if (q === "hint" && state.planet === "MARS") {
+    return "This is the Mars training site. Dust and communication delay are scenario references, not live feeds. Check the local power and equipment readings: what can the crew verify and act on without waiting for Mission Control?";
+  }
+  return "I can help with power, battery, oxygen, CO₂, water, food, solar panels, crew, alerts, objectives, or mission time. Ask about one of those and I’ll use the current mission readings. What would you like to check?";
 }
 
 export const CHARACTER_ROSTER = ROSTER;
