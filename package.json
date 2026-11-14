@@ -1,0 +1,36 @@
+{
+  "name": "spaceapp-launch-lab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Launch Lab \u2014 a deployable 3D astronaut survival training simulation",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0",
+    "build": "next build",
+    "start": "next start --hostname 0.0.0.0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.6",
+    "@react-three/fiber": "^9.4.0",
+    "@vercel/functions": "^3.11.2",
+    "next": "16.4.6",
+    "pg": "^8.16.3",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "three": "^0.181.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.181.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
