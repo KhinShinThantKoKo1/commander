@@ -13,7 +13,7 @@ type CharacterInfo = { id: string; name: string; role: string; image: string; ac
 const CHARACTERS: CharacterInfo[] = [
   { id: "sofia", name: "Sofia", role: "Commander", image: "/assets/characters/sofia.png", accent: "#d9a52f" },
   { id: "pilot", name: "Pilot Andrews", role: "Pilot", image: "/assets/characters/pilot-andrews.png", accent: "#7845aa" },
-  { id: "alexander", name: "Alexander", role: "Navigation Officer", image: "/assets/characters/alexander.png", accent: "#2674d9", opaque: true },
+  { id: "alexander", name: "Alexander", role: "Navigation Officer", image: "/assets/characters/alexander.png", accent: "#2674d9"},
   { id: "christopher", name: "Christopher", role: "Engineer", image: "/assets/characters/christopher.png", accent: "#c9433c" },
   { id: "llian", name: "Llian", role: "Ecologist", image: "/assets/characters/llian.png", accent: "#6a9a38" },
   { id: "jewel", name: "Jewel", role: "Medic", image: "/assets/characters/jewel.png", accent: "#df4e91" },
